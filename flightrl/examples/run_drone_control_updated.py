@@ -1,0 +1,110 @@
+from ruamel.yaml import YAML
+
+from pathlib import Path
+from io import StringIO
+import argparse
+import numpy as np
+import torch
+import os
+
+from stable_baselines3.ppo import PPO
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from rpg_baselines.ppo.ppo2_test import test_model
+from rpg_baselines.envs import vec_env_wrapper as wrapper
+import rpg_baselines.common.util as U
+
+from flightgym import QuadrotorEnv_v1
+
+
+def configure_random_seed(seed, env=None):
+    if env is not None:
+        env.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+def parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train', type=int, default=1,
+                        help="To train new model or simply test pre-trained model")
+    parser.add_argument('--render', type=int, default=0,
+                        help="Enable Unity Render")
+    parser.add_argument('--save_dir', type=str, default=str(Path(__file__).resolve().parent),
+                        help="Directory where to save the checkpoints and training metrics")
+    parser.add_argument('--seed', type=int, default=0,
+                        help="Random seed")
+    parser.add_argument('-w', '--weight', type=str, default='./saved/quadrotor_env.zip',
+                        help='trained weight path')
+    return parser
+
+def main():
+    args = parser().parse_args()
+    yaml = YAML()
+    cfg = yaml.load(open(os.environ["FLIGHTMARE_PATH"] +
+                         "/flightlib/configs/vec_env.yaml", 'r'))
+    if not args.train:
+        cfg["env"]["num_envs"] = 1
+        cfg["env"]["num_threads"] = 1
+
+    if args.render:
+        cfg["env"]["render"] = "yes"
+    else:
+        cfg["env"]["render"] = "no"
+
+    stream = StringIO()
+    yaml.dump(cfg, stream)
+    env = wrapper.FlightEnvVec(
+        QuadrotorEnv_v1(stream.getvalue(), False),
+        GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
+        GOAL_RPY=np.array([0.0, 0.0, 0.0])
+    )
+    # env = VecNormalize(env)
+
+    # set random seed
+    configure_random_seed(args.seed, env=env)
+
+    #
+    rsg_root = str(Path(__file__).resolve().parent)
+    log_dir = rsg_root + '/saved'
+    saver = U.ConfigurationSaver(log_dir=log_dir)
+    if args.train:
+        # save the configuration and other files
+        model = PPO(
+            tensorboard_log=saver.data_dir,
+            policy="MlpPolicy",  # check activation function
+            policy_kwargs=dict(activation_fn=torch.nn.ReLU,
+                net_arch=dict(pi=[128, 128], vf=[128, 128])),
+            env=env,
+            gae_lambda=0.95,
+            gamma=0.99,  # lower 0.9 ~ 0.99
+            # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
+            n_steps=2048,
+            ent_coef=0.01,
+            learning_rate=3e-4,
+            vf_coef=0.5,
+            max_grad_norm=0.5,
+            batch_size=512,
+            n_epochs=10,
+            clip_range=0.2,
+            verbose=1,
+            device="cpu"
+        )
+        # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
+        model.learn(
+            total_timesteps=int(1000),  # 2e7
+            progress_bar=False)
+        model.save(saver.data_dir)
+        # env.save(str(Path(saver.data_dir).parent / "vec_normalize.pkl"))
+
+    # # Testing mode with a trained weight
+    else:
+        #env = VecNormalize.load(str(Path(saver.data_dir).parent / "vec_normalize.pkl"), env)
+        #env.training = False
+        #env.norm_reward = False
+        
+        model = PPO.load(args.weight, device="cpu")
+        test_model(env, model, render=args.render)
+
+
+if __name__ == "__main__":
+    main()

@@ -93,9 +93,11 @@ bool QuadrotorEnv::getObs(Ref<Vector<>> obs) {
 }
 
 Scalar QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs) {
-  quad_act_ = act.cwiseProduct(act_std_) + act_mean_;
+  // ---------- gets collective thrust and roll, pitch, yaw rates
   cmd_.t += sim_dt_;
-  cmd_.thrusts = quad_act_;
+  cmd_.thrusts.fill(NAN);
+  cmd_.collective_thrust = 9.81 * (1.0 + act[0]);
+  cmd_.omega = act.segment<3>(1) * 6.0;
 
   // simulate quadrotor
   quadrotor_ptr_->run(cmd_, sim_dt_);
@@ -103,45 +105,16 @@ Scalar QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs) {
   // update observations
   getObs(obs);
 
-  Matrix<3, 3> rot = quad_state_.q().toRotationMatrix();
-
-  // ---------------------- reward function design
-  // - position tracking
-  Scalar pos_reward =
-    pos_coeff_ * (quad_obs_.segment<quadenv::kNPos>(quadenv::kPos) -
-                  goal_state_.segment<quadenv::kNPos>(quadenv::kPos))
-                   .squaredNorm();
-  // - orientation tracking
-  Scalar ori_reward =
-    ori_coeff_ * (quad_obs_.segment<quadenv::kNOri>(quadenv::kOri) -
-                  goal_state_.segment<quadenv::kNOri>(quadenv::kOri))
-                   .squaredNorm();
-  // - linear velocity tracking
-  Scalar lin_vel_reward =
-    lin_vel_coeff_ * (quad_obs_.segment<quadenv::kNLinVel>(quadenv::kLinVel) -
-                      goal_state_.segment<quadenv::kNLinVel>(quadenv::kLinVel))
-                       .squaredNorm();
-  // - angular velocity tracking
-  Scalar ang_vel_reward =
-    ang_vel_coeff_ * (quad_obs_.segment<quadenv::kNAngVel>(quadenv::kAngVel) -
-                      goal_state_.segment<quadenv::kNAngVel>(quadenv::kAngVel))
-                       .squaredNorm();
-
-  // - control action penalty
-  Scalar act_reward = act_coeff_ * act.cast<Scalar>().norm();
-
-  Scalar total_reward =
-    pos_reward + ori_reward + lin_vel_reward + ang_vel_reward + act_reward;
-
-  // survival reward
-  total_reward += 0.1;
-
-  return total_reward;
+  return 0.0;
 }
 
 bool QuadrotorEnv::isTerminalState(Scalar &reward) {
   if (quad_state_.x(QS::POSZ) <= 0.02) {
-    reward = -0.02;
+    reward = -1.0;
+    return true;
+  }
+  if (cmd_.t >= max_t_) {
+    reward = 0.0;
     return true;
   }
   reward = 0.0;

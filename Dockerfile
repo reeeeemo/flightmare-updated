@@ -45,3 +45,6 @@ RUN pip3 install torch torchvision
 # install any other dependencies required
 RUN cd /home/flightmare/flightlib && pip3 install . \
     && cd /home/flightmare/flightrl && pip3 install .
+
+# matplotlib errors 
+RUN pip3 install matplotlib --upgrade

@@ -16,6 +16,7 @@ setup(
     description='Flightmare: A Quadrotor Simulator.',
     long_description='',
     install_requires=['gymnasium', 'ruamel.yaml',
-                      'numpy', 'stable_baselines3'],
-    packages=['rpg_baselines'],
+                      'numpy', 'stable_baselines3',
+                      'tensorboard'],
+    packages=find_packages(),
 )
