@@ -129,16 +129,6 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
     return false;
   }
 
-  if (cfg["rl"]) {
-    // load reinforcement learning related parameters
-    pos_coeff_ = cfg["rl"]["pos_coeff"].as<Scalar>();
-    ori_coeff_ = cfg["rl"]["ori_coeff"].as<Scalar>();
-    lin_vel_coeff_ = cfg["rl"]["lin_vel_coeff"].as<Scalar>();
-    ang_vel_coeff_ = cfg["rl"]["ang_vel_coeff"].as<Scalar>();
-    act_coeff_ = cfg["rl"]["act_coeff"].as<Scalar>();
-  } else {
-    return false;
-  }
   return true;
 }
 

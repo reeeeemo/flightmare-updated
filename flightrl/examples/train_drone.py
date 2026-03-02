@@ -17,6 +17,22 @@ import rpg_baselines.common.util as U
 from flightgym import QuadrotorEnv_v1
 
 
+# Trains drone on its ability to hover.
+# Allows for rendering via unity and saved weights
+
+# Use: python3 train_drone.py
+#   --render <1/0>  (default 1)
+#   --train <1/0>   (default 0)
+#   --save_dir <save_dir>   (default ./saved)
+#   --seed <seed_int>   (default 0)
+#   --weight <saved_quadcopter_zip> (can also use -w)
+# Example:
+# python3 train_drone.py
+#   --render 1
+#   --train 0
+#   --weight ./saved/quadrotor_env.zip
+
+
 def configure_random_seed(seed, env=None):
     if env is not None:
         env.seed(seed)
@@ -58,7 +74,6 @@ def main():
         GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
         GOAL_RPY=np.array([0.0, 0.0, 0.0])
     )
-    # env = VecNormalize(env)
 
     # set random seed
     configure_random_seed(args.seed, env=env)
@@ -79,7 +94,7 @@ def main():
             gamma=0.99,  # lower 0.9 ~ 0.99
             # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
             n_steps=2048,
-            ent_coef=0.01,
+            ent_coef=0.0,
             learning_rate=3e-4,
             vf_coef=0.5,
             max_grad_norm=0.5,
@@ -91,17 +106,12 @@ def main():
         )
         # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
         model.learn(
-            total_timesteps=int(1000),  # 2e7
+            total_timesteps=int(2e7),  # 2e7
             progress_bar=False)
         model.save(saver.data_dir)
-        # env.save(str(Path(saver.data_dir).parent / "vec_normalize.pkl"))
 
     # # Testing mode with a trained weight
     else:
-        #env = VecNormalize.load(str(Path(saver.data_dir).parent / "vec_normalize.pkl"), env)
-        #env.training = False
-        #env.norm_reward = False
-        
         model = PPO.load(args.weight, device="cpu")
         test_model(env, model, render=args.render)
 

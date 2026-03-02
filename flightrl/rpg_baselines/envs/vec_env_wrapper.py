@@ -56,10 +56,10 @@ class FlightEnvVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.pos_coef = -0.002
-        self.orien_coef = -0.002
-        self.lin_vel_coef = -0.0002
-        self.ang_vel_coef = -0.0002
+        self.pos_coef = -0.02
+        self.orien_coef = -0.02
+        self.lin_vel_coef = -0.002
+        self.ang_vel_coef = -0.001
         self.act_coef = -0.0002
 
         # goals

@@ -35,6 +35,11 @@ Run `docker build -t flightmare .` to start.
   - Ensure that DevContainers is installed as an extension
   - Press `CTRL+SHIFT+P` and select `Dev Containers: Attach to Running Container...`
 
+
+After docker is built, to run anything in `flightrl`:
+- Run `pip3 install .` inside of `flightrl`
+
+
 ## Publication
 
 ```
