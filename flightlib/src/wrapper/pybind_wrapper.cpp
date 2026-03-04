@@ -22,6 +22,8 @@ PYBIND11_MODULE(flightgym, m) {
     .def("step", &VecEnv<QuadrotorEnv>::step)
     .def("testStep", &VecEnv<QuadrotorEnv>::testStep)
     .def("setSeed", &VecEnv<QuadrotorEnv>::setSeed)
+    .def("increaseRotMult", &VecEnv<QuadrotorEnv>::increaseRotMult)
+    .def("decreaseRotMult", &VecEnv<QuadrotorEnv>::decreaseRotMult)
     .def("close", &VecEnv<QuadrotorEnv>::close)
     .def("isTerminalState", &VecEnv<QuadrotorEnv>::isTerminalState)
     .def("curriculumUpdate", &VecEnv<QuadrotorEnv>::curriculumUpdate)

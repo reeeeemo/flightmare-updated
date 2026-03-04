@@ -53,6 +53,8 @@ class QuadrotorEnv final : public EnvBase {
 
   // - public set functions
   bool loadParam(const YAML::Node &cfg);
+  void increaseRotMult(const Scalar num);
+  void decreaseRotMult(const Scalar num);
 
   // - public get functions
   bool getObs(Ref<Vector<>> obs) override;

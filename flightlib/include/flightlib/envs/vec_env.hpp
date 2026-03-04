@@ -38,6 +38,8 @@ class VecEnv {
 
   // public set functions
   void setSeed(const int seed);
+  void increaseRotMult(const Scalar num);
+  void decreaseRotMult(const Scalar num);
 
   // public get functions
   void getObs(Ref<MatrixRowMajor<>> obs);

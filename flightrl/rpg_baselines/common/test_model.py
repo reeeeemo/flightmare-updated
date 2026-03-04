@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.gridspec as gridspec
 
 
-def test_model(env, model, render=False):
+def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str = ""):
     #
     fig = plt.figure(figsize=(18, 12), tight_layout=True)
     gs = gridspec.GridSpec(5, 12)
@@ -30,7 +30,6 @@ def test_model(env, model, render=False):
     ax_action3 = fig.add_subplot(gs[4, 9:12])
 
     max_ep_length = env.max_episode_steps
-    num_rollouts = 5
     if render:
         env.connectUnity()
     for n_roll in range(num_rollouts):
@@ -102,4 +101,5 @@ def test_model(env, model, render=False):
     ax_action3.legend()
     #
     plt.tight_layout()
+    fig.savefig(weight_path.replace(".zip", ".png"))
     plt.show()

@@ -1,14 +1,13 @@
 import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
+from collections import deque
 
 class FlightEnvVec(VecEnv):
-    """Custom Gymnasium environment that simulates a drone.
+    """Custom Gymnasium environment that simulates a drone hovering.
 
     Allows for multiple environments in native C++ threads.
-    TODO: get drone to hover lol
-    TODO: allow for waypoints to be placed to follow
-    TODO: allow gates to be passed through via a camera
+    Also follows a curriculum learning strategy to increase difficulty.
     Attributes:
         wrapper: C++ wrapper that handles physics/simulation
         _observation: observation matrix for each env
@@ -21,6 +20,7 @@ class FlightEnvVec(VecEnv):
                  impl, 
                  GOAL_XYZ: np.ndarray,
                  GOAL_RPY: np.ndarray,
+                 max_memory_space: int = 200
          ):
         self.wrapper = impl
         self.num_obs = self.wrapper.getObsDim()
@@ -32,12 +32,12 @@ class FlightEnvVec(VecEnv):
         # [x, y, z]
         # [yaw, pitch, roll]
         # [x_vel, y_vel, z_vel]
-        # [yaw_vel, pitch_vel, roll_vel]
+        # [roll, pitch, yaw vel]
         self._observation_space = spaces.Box(
             np.ones(self.num_obs) * -np.inf,
             np.ones(self.num_obs) * np.inf, dtype=np.float32)
         
-        # [rpm_1, rpm_2, rpm_3, rpm_4] for each motor
+        # [collective thrust, roll, pitch, yaw] rates
         self._action_space = spaces.Box(
             low=np.ones(self.num_acts) * -1.,
             high=np.ones(self.num_acts) * 1.,
@@ -65,6 +65,10 @@ class FlightEnvVec(VecEnv):
         # goals
         self.goal_xyz = GOAL_XYZ
         self.goal_rpy = GOAL_RPY
+
+        # memory for curriculum learning
+        self.ep_successes = deque(maxlen=max_memory_space)
+        self.rot_mult = 0.2  # rotation multiplier. also in yaml.
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -119,9 +123,11 @@ class FlightEnvVec(VecEnv):
             info = [{} for i in range(self.num_envs)]
 
         # update reward information if environment is finished
+        # update memory to know whether drone crashes (-1 penalty) or not
         for i in range(self.num_envs):
             self.rewards[i].append(self._reward[i])
             if self._done[i]:
+                self.ep_successes.append(self._reward[i] != -1)
                 eprew = sum(self.rewards[i])
                 eplen = len(self.rewards[i])
                 epinfo = {"r": eprew, "l": eplen}
@@ -210,7 +216,19 @@ class FlightEnvVec(VecEnv):
         raise RuntimeError('This method is not implemented')
 
     def curriculum_callback(self):
-        self.wrapper.curriculumUpdate()
+        """Increase difficulty of drone hover problem if consistently successful.
+
+        Uses curriculum learning to increase allowed rotational tilt if success
+        rate is or above 90%.
+        """
+        if not self.ep_successes:
+            return
+
+        success_rate = sum(self.ep_successes) / len(self.ep_successes)
+        if success_rate >= 0.9:
+            self.wrapper.increaseRotMult(0.2)
+            self.rot_mult = min(self.rot_mult + 0.2, 1.0)
+            self.ep_successes.clear()
 
     def step_async(self, actions):
         self._async_actions = actions

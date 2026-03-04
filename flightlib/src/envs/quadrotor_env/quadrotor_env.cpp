@@ -135,6 +135,14 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
   return true;
 }
 
+void QuadrotorEnv::increaseRotMult(const Scalar num) {
+  rot_mult_ = std::min(rot_mult_ + num, (float)1.0);
+}
+
+void QuadrotorEnv::decreaseRotMult(const Scalar num) {
+  rot_mult_ = std::max(rot_mult_ - num, (float)0.0);
+}
+
 bool QuadrotorEnv::getAct(Ref<Vector<>> act) const {
   if (cmd_.t >= 0.0 && quad_act_.allFinite()) {
     act = quad_act_;

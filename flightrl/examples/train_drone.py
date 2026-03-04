@@ -8,6 +8,7 @@ import torch
 import os
 
 from stable_baselines3.ppo import PPO
+from stable_baselines3.common.callbacks import BaseCallback
 from rpg_baselines.common.test_model import test_model
 from rpg_baselines.envs import vec_env_wrapper as wrapper
 import rpg_baselines.common.util as U
@@ -30,6 +31,13 @@ from flightgym import QuadrotorEnv_v1
 #   --train 0
 #   --weight ./saved/quadrotor_env.zip
 
+class CurriculumCallback(BaseCallback):
+    def _on_rollout_start(self) -> None:
+        self.training_env.curriculum_callback()
+        self.logger.record("curriculum/rot_mult", self.training_env.rot_mult)
+
+    def _on_step(self) -> bool:
+        return True
 
 def configure_random_seed(seed, env=None):
     if env is not None:
@@ -81,31 +89,36 @@ def main():
     log_dir = rsg_root + '/saved'
     saver = U.ConfigurationSaver(log_dir=log_dir)
     if args.train:
-        # save the configuration and other files
-        model = PPO(
-            tensorboard_log=saver.data_dir,
-            policy="MlpPolicy",  # check activation function
-            policy_kwargs=dict(activation_fn=torch.nn.ReLU,
-                net_arch=dict(pi=[64, 64], vf=[64, 64])),
-            env=env,
-            gae_lambda=0.95,
-            gamma=0.99,  # lower 0.9 ~ 0.99
-            # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
-            n_steps=2048,
-            ent_coef=0.005,
-            learning_rate=3e-4,
-            vf_coef=0.5,
-            max_grad_norm=0.5,
-            batch_size=512,
-            n_epochs=10,
-            clip_range=0.2,
-            verbose=1,
-            device="cpu"
-        )
+        if args.weight == "./saved/quadrotor_env.zip":
+            model = PPO(
+                tensorboard_log=saver.data_dir,
+                policy="MlpPolicy",  # check activation function
+                policy_kwargs=dict(activation_fn=torch.nn.ReLU,
+                    net_arch=dict(pi=[64, 64], vf=[64, 64])),
+                env=env,
+                gae_lambda=0.95,
+                gamma=0.99,  # lower 0.9 ~ 0.99
+                # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
+                n_steps=2048,
+                ent_coef=0.005,
+                learning_rate=3e-4,
+                vf_coef=0.5,
+                max_grad_norm=0.5,
+                batch_size=512,
+                n_epochs=10,
+                clip_range=0.2,
+                verbose=1,
+                device="cpu"
+            )
+        else:
+            model = PPO.load(args.weight, env=env, device="cpu")
         # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
         model.learn(
             total_timesteps=int(2e7),  # 2e7
-            progress_bar=False)
+            progress_bar=False,
+            reset_num_timesteps=False,
+            callback=CurriculumCallback()
+        )
         model.save(saver.data_dir)
 
     # # Testing mode with a trained weight

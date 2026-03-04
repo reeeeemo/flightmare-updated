@@ -126,6 +126,16 @@ void VecEnv<EnvBase>::setSeed(const int seed) {
 }
 
 template<typename EnvBase>
+void VecEnv<EnvBase>::increaseRotMult(const Scalar num) {
+  for (int i = 0; i < num_envs_; i++) envs_[i]->increaseRotMult(num);
+}
+
+template<typename EnvBase>
+void VecEnv<EnvBase>::decreaseRotMult(const Scalar num) {
+  for (int i = 0; i < num_envs_; i++) envs_[i]->decreaseRotMult(num);
+}
+
+template<typename EnvBase>
 void VecEnv<EnvBase>::getObs(Ref<MatrixRowMajor<>> obs) {
   for (int i = 0; i < num_envs_; i++) envs_[i]->getObs(obs.row(i));
 }
