@@ -56,8 +56,8 @@ class FlightEnvVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.pos_coef = -0.02
-        self.orien_coef = -0.02
+        self.pos_coef = -0.006
+        self.orien_coef = -0.01
         self.lin_vel_coef = -0.002
         self.ang_vel_coef = -0.001
         self.act_coef = -0.0002
@@ -91,7 +91,7 @@ class FlightEnvVec(VecEnv):
             self.lin_vel_coef * np.sum(vel_err**2, axis=1) +
             self.ang_vel_coef * np.sum(ang_err**2, axis=1) +
             self.act_coef * np.linalg.norm(action, axis=1) +
-            0.1 # survival
+            0.05
         ).astype(np.float32)
 
     def step(self, action: np.ndarray):

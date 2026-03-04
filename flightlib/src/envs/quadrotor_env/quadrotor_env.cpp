@@ -8,11 +8,8 @@ QuadrotorEnv::QuadrotorEnv()
 
 QuadrotorEnv::QuadrotorEnv(const std::string &cfg_path)
   : EnvBase(),
-    pos_coeff_(0.0),
-    ori_coeff_(0.0),
-    lin_vel_coeff_(0.0),
-    ang_vel_coeff_(0.0),
-    act_coeff_(0.0),
+    rot_scale_(1.0),
+    rot_mult_(0.1),
     goal_state_((Vector<quadenv::kNObs>() << 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0,
                  0.0, 0.0, 0.0, 0.0, 0.0)
                   .finished()) {
@@ -62,10 +59,14 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random) {
     quad_state_.x(QS::VELY) = uniform_dist_(random_gen_);
     quad_state_.x(QS::VELZ) = uniform_dist_(random_gen_);
     // reset orientation
-    quad_state_.x(QS::ATTW) = uniform_dist_(random_gen_);
-    quad_state_.x(QS::ATTX) = uniform_dist_(random_gen_);
-    quad_state_.x(QS::ATTY) = uniform_dist_(random_gen_);
-    quad_state_.x(QS::ATTZ) = uniform_dist_(random_gen_);
+    // (w, x, y, z)
+    // how far is the quadcopter tilted (1.0~=0, 0.0~=180)
+    quad_state_.x(QS::ATTW) = rot_scale_;
+
+    // x, y, z vector components of quaternion for rot matrix
+    quad_state_.x(QS::ATTX) = uniform_dist_(random_gen_) * rot_mult_;
+    quad_state_.x(QS::ATTY) = uniform_dist_(random_gen_) * rot_mult_;
+    quad_state_.x(QS::ATTZ) = uniform_dist_(random_gen_) * rot_mult_;
     quad_state_.qx /= quad_state_.qx.norm();
   }
   // reset quadrotor with random states
@@ -125,6 +126,8 @@ bool QuadrotorEnv::loadParam(const YAML::Node &cfg) {
   if (cfg["quadrotor_env"]) {
     sim_dt_ = cfg["quadrotor_env"]["sim_dt"].as<Scalar>();
     max_t_ = cfg["quadrotor_env"]["max_t"].as<Scalar>();
+    rot_mult_ = cfg["quadrotor_env"]["rotation_mult"].as<Scalar>();
+    rot_scale_ = cfg["quadrotor_env"]["rotation_scale"].as<Scalar>();
   } else {
     return false;
   }

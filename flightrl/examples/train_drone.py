@@ -8,9 +8,7 @@ import torch
 import os
 
 from stable_baselines3.ppo import PPO
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from rpg_baselines.ppo.ppo2_test import test_model
+from rpg_baselines.common.test_model import test_model
 from rpg_baselines.envs import vec_env_wrapper as wrapper
 import rpg_baselines.common.util as U
 
@@ -88,13 +86,13 @@ def main():
             tensorboard_log=saver.data_dir,
             policy="MlpPolicy",  # check activation function
             policy_kwargs=dict(activation_fn=torch.nn.ReLU,
-                net_arch=dict(pi=[128, 128], vf=[128, 128])),
+                net_arch=dict(pi=[64, 64], vf=[64, 64])),
             env=env,
             gae_lambda=0.95,
             gamma=0.99,  # lower 0.9 ~ 0.99
             # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
             n_steps=2048,
-            ent_coef=0.0,
+            ent_coef=0.005,
             learning_rate=3e-4,
             vf_coef=0.5,
             max_grad_norm=0.5,
@@ -113,7 +111,7 @@ def main():
     # # Testing mode with a trained weight
     else:
         model = PPO.load(args.weight, device="cpu")
-        test_model(env, model, render=args.render)
+        test_model(env, model, render=args.render, weight_path=args.weight)
 
 
 if __name__ == "__main__":

@@ -73,8 +73,9 @@ class QuadrotorEnv final : public EnvBase {
   Command cmd_;
   Logger logger_{"QaudrotorEnv"};
 
-  // Define reward for training
-  Scalar pos_coeff_, ori_coeff_, lin_vel_coeff_, ang_vel_coeff_, act_coeff_;
+  // define multipliers for random axis tilts in environment
+  Scalar rot_scale_, rot_mult_;
+
 
   // observations and actions (for RL)
   Vector<quadenv::kNObs> quad_obs_;
