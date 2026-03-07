@@ -10,7 +10,7 @@ import os
 from stable_baselines3.ppo import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from rpg_baselines.common.test_model import test_model
-from rpg_baselines.envs import vec_env_wrapper as wrapper
+from rpg_baselines.envs import quadcopter_hover_vec as wrapper
 import rpg_baselines.common.util as U
 
 from flightgym import QuadrotorEnv_v1
@@ -75,7 +75,7 @@ def main():
 
     stream = StringIO()
     yaml.dump(cfg, stream)
-    env = wrapper.FlightEnvVec(
+    env = wrapper.QuadcopterHoverVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
         GOAL_RPY=np.array([0.0, 0.0, 0.0])
