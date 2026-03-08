@@ -56,6 +56,7 @@ class VecEnv {
   bool setUnity(bool render);
   bool connectUnity();
   void disconnectUnity();
+  void addGate(Ref<MatrixRowMajor<>> positions);
 
   // public functions
   inline int getSeed(void) { return seed_; };
@@ -91,6 +92,7 @@ class VecEnv {
   bool unity_render_{false};
   RenderMessage_t unity_output_;
   uint16_t receive_id_{0};
+  int gateCounter;
 
   // auxiliar variables
   int seed_, num_envs_, obs_dim_, act_dim_;

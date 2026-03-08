@@ -84,10 +84,17 @@ def main():
     # set random seed
     configure_random_seed(args.seed, env=env)
 
-    #
-    rsg_root = str(Path(__file__).resolve().parent)
-    log_dir = rsg_root + '/saved'
-    saver = U.ConfigurationSaver(log_dir=log_dir)
+    # create file for saving stuff, or add gates if rendering
+    if not args.render:
+        rsg_root = str(Path(__file__).resolve().parent)
+        log_dir = rsg_root + '/saved'
+        saver = U.ConfigurationSaver(log_dir=log_dir)
+    else:
+        env.addGate(np.array([
+            [0.0, 10.0, 1.5],
+            [0.0, -10.0, 0.5],
+        ], dtype=np.float32))
+
     if args.train:
         if args.weight == "./saved/quadrotor_env.zip":
             model = PPO(

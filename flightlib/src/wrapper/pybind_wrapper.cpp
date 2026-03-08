@@ -27,6 +27,7 @@ PYBIND11_MODULE(flightgym, m) {
     .def("close", &VecEnv<QuadrotorEnv>::close)
     .def("isTerminalState", &VecEnv<QuadrotorEnv>::isTerminalState)
     .def("curriculumUpdate", &VecEnv<QuadrotorEnv>::curriculumUpdate)
+    .def("addGate", &VecEnv<QuadrotorEnv>::addGate)
     .def("connectUnity", &VecEnv<QuadrotorEnv>::connectUnity)
     .def("disconnectUnity", &VecEnv<QuadrotorEnv>::disconnectUnity)
     .def("getNumOfEnvs", &VecEnv<QuadrotorEnv>::getNumOfEnvs)

@@ -1,4 +1,5 @@
 #include "flightlib/envs/vec_env.hpp"
+#include "flightlib/objects/static_gate.hpp"
 
 namespace flightlib {
 
@@ -34,6 +35,7 @@ void VecEnv<EnvBase>::init(void) {
   seed_ = cfg_["env"]["seed"].as<int>();
   num_envs_ = cfg_["env"]["num_envs"].as<int>();
   scene_id_ = cfg_["env"]["scene_id"].as<SceneID>();
+  gateCounter = 0;
 
   // set threads
   omp_set_num_threads(cfg_["env"]["num_threads"].as<int>());
@@ -182,9 +184,24 @@ bool VecEnv<EnvBase>::setUnity(bool render) {
     for (int i = 0; i < num_envs_; i++) {
       envs_[i]->addObjectsToUnity(unity_bridge_ptr_);
     }
+
     logger_.info("Flightmare Bridge is created.");
   }
   return true;
+}
+
+template<typename EnvBase>
+void VecEnv<EnvBase>::addGate(Ref<MatrixRowMajor<>> positions) {
+  if (unity_bridge_ptr_ == nullptr) return;
+
+  for (int i = 0; i < positions.rows(); i++) {
+    Vector<3> pos = positions.row(i).transpose();
+    std::shared_ptr<StaticObject> gate = std::make_shared<StaticGate>("unity_gate_" + std::to_string(gateCounter), "rpg_gate");
+    gate->setPosition(pos);
+    gate->setQuaternion(Quaternion(std::cos(M_PI_4), 0.0, std::sin(1 * M_PI_4), 0.0));
+    unity_bridge_ptr_->addStaticObject(gate);
+    gateCounter += 1;
+  }
 }
 
 template<typename EnvBase>

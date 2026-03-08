@@ -190,6 +190,15 @@ class QuadcopterHoverVec(VecEnv):
     def connectUnity(self):
         self.wrapper.connectUnity()
 
+    def addGate(self, positions: np.ndarray):
+        """Adds a static gate to the drone environment.
+        
+        Note that Y and Z will be swapped in unity rendering.
+        Args:
+            positions: matrix of [X,Y,Z] coordinates for each gate.
+        """
+        self.wrapper.addGate(positions)
+
     def disconnectUnity(self):
         self.wrapper.disconnectUnity()
 
