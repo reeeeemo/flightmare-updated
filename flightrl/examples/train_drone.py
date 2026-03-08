@@ -10,7 +10,8 @@ import os
 from stable_baselines3.ppo import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from rpg_baselines.common.test_model import test_model
-from rpg_baselines.envs import quadcopter_hover_vec as wrapper
+from rpg_baselines.envs.quadcopter_hover_vec import QuadcopterHoverVec
+from rpg_baselines.envs.quadcopter_gates_vec import QuadcopterGatesVec
 import rpg_baselines.common.util as U
 
 from flightgym import QuadrotorEnv_v1
@@ -75,7 +76,14 @@ def main():
 
     stream = StringIO()
     yaml.dump(cfg, stream)
-    env = wrapper.QuadcopterHoverVec(
+    # hovers
+    # env = QuadcopterHoverVec(
+    #     QuadrotorEnv_v1(stream.getvalue(), False),
+    #     GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
+    #     GOAL_RPY=np.array([0.0, 0.0, 0.0])
+    # )
+    # flies throgh gates
+    env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
         GOAL_RPY=np.array([0.0, 0.0, 0.0])
@@ -91,8 +99,8 @@ def main():
         saver = U.ConfigurationSaver(log_dir=log_dir)
     else:
         env.addGate(np.array([
-            [0.0, 10.0, 1.5],
-            [0.0, -10.0, 0.5],
+            [0.0, 4, 5],
+            [0.0, 11, 7],
         ], dtype=np.float32))
 
     if args.train:

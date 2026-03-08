@@ -3,8 +3,8 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from collections import deque
 
-class QuadcopterHoverVec(VecEnv):
-    """Custom Gymnasium environment that simulates a drone hovering.
+class QuadcopterGatesVec(VecEnv):
+    """Custom Gymnasium environment that simulates a drone flying through gates
 
     Allows for multiple environments in native C++ threads.
     Also follows a curriculum learning strategy to increase difficulty.

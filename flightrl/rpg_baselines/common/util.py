@@ -11,11 +11,6 @@ class ConfigurationSaver:
             datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         os.makedirs(self._data_dir)
 
-        # if save_items is not None:
-        #     for save_item in save_items:
-        #         base_file_name = ntpath.basename(save_item)
-        #         copyfile(save_item, self._data_dir + '/' + base_file_name)
-
     @property
     def data_dir(self):
         return self._data_dir
