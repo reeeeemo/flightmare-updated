@@ -2,6 +2,7 @@ import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from collections import deque
+import random as rand
 
 class QuadcopterGatesVec(VecEnv):
     """Custom Gymnasium environment that simulates a drone flying through gates
@@ -18,8 +19,6 @@ class QuadcopterGatesVec(VecEnv):
     """
     def __init__(self, 
                  impl, 
-                 GOAL_XYZ: np.ndarray,
-                 GOAL_RPY: np.ndarray,
                  max_memory_space: int = 200
          ):
         self.wrapper = impl
@@ -29,7 +28,7 @@ class QuadcopterGatesVec(VecEnv):
         print(f"[OBSERVATION STATE DIM]: {self.num_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
-        # [x, y, z]
+        # [x_to_near_gate, y_to_near_gate, z_to_near_gate]
         # [yaw, pitch, roll]
         # [x_vel, y_vel, z_vel]
         # [roll, pitch, yaw vel]
@@ -62,13 +61,14 @@ class QuadcopterGatesVec(VecEnv):
         self.ang_vel_coef = -0.001
         self.act_coef = -0.0002
 
-        # goals
-        self.goal_xyz = GOAL_XYZ
-        self.goal_rpy = GOAL_RPY
+        # goal gates
+        self.gates = np.zeros((0, 3), dtype=np.float32)
+        self.cur_gate = np.zeros(self.num_envs, dtype=int)
+        self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
 
-        # memory for curriculum learning
         self.ep_successes = deque(maxlen=max_memory_space)
-        self.rot_mult = 0.2  # rotation multiplier. also in yaml.
+        self.randomize_gates = False
+
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -82,8 +82,8 @@ class QuadcopterGatesVec(VecEnv):
             reward based on drone observation state and current action
         """
         
-        pos_err = self._observation[:, 0:3] - self.goal_xyz
-        ori_err = self._observation[:, 5:2:-1] - self.goal_rpy
+        pos_err = self._observation[:, 0:3]
+        ori_err = self._observation[:, 5:2:-1] - np.array([0, 0, 0])
         vel_err = self._observation[:, 6:9]
         ang_err = self._observation[:, 9:12]
 
@@ -109,6 +109,9 @@ class QuadcopterGatesVec(VecEnv):
         # values are clamped in c++ code
         self.wrapper.step(action, self._observation,
                           self._reward, self._done, self._extraInfo)
+        # update observation to estimated gate position - estimated drone pos
+        self.drone_pos = self._observation[:, 0:3].copy()
+        self._observation[:, 0:3] = self.gates[self.cur_gate] - self.drone_pos
 
         # compute reward and if -1 dont adjust, but if 0 we update reward
         step_reward = self._compute_reward(action)
@@ -122,12 +125,24 @@ class QuadcopterGatesVec(VecEnv):
         else:
             info = [{} for i in range(self.num_envs)]
 
-        # update reward information if environment is finished
-        # update memory to know whether drone crashes (-1 penalty) or not
+
         for i in range(self.num_envs):
+            # update current gate selection + give reward if position is close
+            dist = np.linalg.norm(self._observation[i, 0:3])
+            if dist < 1.5:
+                if self._reward[i] != -1:  # or whatever the crash reward is
+                    self._reward[i] += 2.0
+                self.cur_gate[i] += 1
+                if self.cur_gate[i] >= len(self.gates):
+                    self._done[i] = True
+                else:
+                    self._observation[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
+
+            # update reward information if environment is finished
+            # update memory to know whether drone crashes (-1 penalty) or not
             self.rewards[i].append(self._reward[i])
             if self._done[i]:
-                self.ep_successes.append(self._reward[i] != -1)
+                self.ep_successes.append(self._reward[i] != -1 and self.cur_gate[i] >= len(self.gates))
                 eprew = sum(self.rewards[i])
                 eplen = len(self.rewards[i])
                 epinfo = {"r": eprew, "l": eplen}
@@ -164,6 +179,15 @@ class QuadcopterGatesVec(VecEnv):
     def reset(self):
         """Resets drone environment."""
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
+        self.cur_gate = np.zeros(self.num_envs, dtype=int)
+
+        if self.randomize_gates:
+            self.randomize_gates = False
+            self.gates = np.array([
+                [0.0, rand.uniform(0.0, 5.0), rand.uniform(0.0, 5.0)],
+                [0.0, rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
+            ], dtype=np.float32)
+
         self.wrapper.reset(self._observation)
         return self._observation.copy()
 
@@ -191,12 +215,16 @@ class QuadcopterGatesVec(VecEnv):
         self.wrapper.connectUnity()
 
     def addGate(self, positions: np.ndarray):
-        """Adds a static gate to the drone environment.
-        
+        """Adds a static gate to each drone environment.
+
+        Adds to recurring memory of gates for simulation training.
+        Note that this MUST be called BEFORE `.connectUnity()`, or else
+        gate will not appear.
         Args:
             positions: matrix of [X,Y,Z] coordinates for each gate.
         """
         self.wrapper.addGate(positions)
+        self.gates = positions.copy()
 
     def disconnectUnity(self):
         self.wrapper.disconnectUnity()
@@ -224,18 +252,14 @@ class QuadcopterGatesVec(VecEnv):
         raise RuntimeError('This method is not implemented')
 
     def curriculum_callback(self):
-        """Increase difficulty of drone hover problem if consistently successful.
-
-        Uses curriculum learning to increase allowed rotational tilt if success
-        rate is or above 90%.
+        """Increase difficulty of gate problem if consistently successful.
         """
         if not self.ep_successes:
             return
-
+        
         success_rate = sum(self.ep_successes) / len(self.ep_successes)
         if success_rate >= 0.9:
-            self.wrapper.increaseRotMult(0.2)
-            self.rot_mult = min(self.rot_mult + 0.2, 1.0)
+            self.randomize_gates = True
             self.ep_successes.clear()
 
     def step_async(self, actions):

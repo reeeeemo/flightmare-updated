@@ -69,6 +69,7 @@ class QuadcopterHoverVec(VecEnv):
         # memory for curriculum learning
         self.ep_successes = deque(maxlen=max_memory_space)
         self.rot_mult = 0.2  # rotation multiplier. also in yaml.
+        self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -81,8 +82,8 @@ class QuadcopterHoverVec(VecEnv):
         Returns:
             reward based on drone observation state and current action
         """
-        
-        pos_err = self._observation[:, 0:3] - self.goal_xyz
+
+        pos_err = self._observation[:, 0:3]
         ori_err = self._observation[:, 5:2:-1] - self.goal_rpy
         vel_err = self._observation[:, 6:9]
         ang_err = self._observation[:, 9:12]
@@ -110,6 +111,8 @@ class QuadcopterHoverVec(VecEnv):
         self.wrapper.step(action, self._observation,
                           self._reward, self._done, self._extraInfo)
 
+        self.drone_pos = self._observation[:, 0:3].copy()
+        self._observation[:, 0:3] = self.goal_xyz - self.drone_pos
         # compute reward and if -1 dont adjust, but if 0 we update reward
         step_reward = self._compute_reward(action)
         self._reward = np.where(self._done, self._reward, step_reward)
