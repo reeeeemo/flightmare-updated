@@ -55,10 +55,9 @@ class QuadcopterGatesVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.pos_coef = -0.006
-        self.orien_coef = -0.01
-        self.lin_vel_coef = -0.002
-        self.ang_vel_coef = -0.001
+        self.pos_coef = -0.002
+        self.lin_vel_coef = 0.04
+        self.ang_vel_coef = -0.0001
         self.act_coef = -0.0002
 
         # goal gates
@@ -82,21 +81,25 @@ class QuadcopterGatesVec(VecEnv):
             reward based on drone observation state and current action
         """
         
-        pos_err = self._observation[:, 0:3]
-        ori_err = self._observation[:, 5:2:-1] - np.array([0, 0, 0])
-        vel_err = self._observation[:, 6:9]
-        ang_err = self._observation[:, 9:12]
+        gate_dir = self._observation[:, 0:3]
+        vel = self._observation[:, 6:9]
+        ang_vel = self._observation[:, 9:12]
+
+        # compute normalized gate direction then velocity twrds gate
+        gate_dist = np.linalg.norm(gate_dir, axis=1, keepdims=True).clip(min=1e-6)
+        vel_towards_gate = np.sum(vel * (gate_dir / gate_dist), axis=1)
+
+        # pos_penalty = self.pos_coef * np.sum(gate_dir**2, axis=1) / (gate_dist.squeeze() + 1e-6)
 
         # position, orientation, linear and angular velocity
         # and penalty for having to use an action
         return (
-            self.pos_coef * np.sum(pos_err**2, axis=1) +
-            self.orien_coef * np.sum(ori_err**2, axis=1) +
-            self.lin_vel_coef * np.sum(vel_err**2, axis=1) +
-            self.ang_vel_coef * np.sum(ang_err**2, axis=1) +
-            self.act_coef * np.linalg.norm(action, axis=1) +
-            0.05
+            self.pos_coef * gate_dist.squeeze() + 
+            self.lin_vel_coef * vel_towards_gate +
+            self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +
+            self.act_coef * np.linalg.norm(action, axis=1)
         ).astype(np.float32)
+        # 0.05 was old survival bonus
 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
@@ -138,16 +141,25 @@ class QuadcopterGatesVec(VecEnv):
                 else:
                     self._observation[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
 
+            # if done, give a time-based bonus (lower the better)
+            if self._done[i] and self.cur_gate[i] >= len(self.gates):
+                self._reward[i] += 2.0 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
+            # if done, no crashes, and drone did not go thru all gates, give penalty
+            elif self._done[i] and self.cur_gate[i] < len(self.gates):
+                if self._reward[i] != -1:
+                    self._reward[i] -= 2.0
+
             # update reward information if environment is finished
             # update memory to know whether drone crashes (-1 penalty) or not
             self.rewards[i].append(self._reward[i])
             if self._done[i]:
-                self.ep_successes.append(self._reward[i] != -1 and self.cur_gate[i] >= len(self.gates))
-                eprew = sum(self.rewards[i])
                 eplen = len(self.rewards[i])
+                eprew = sum(self.rewards[i])
+                self.ep_successes.append(self._reward[i] != -1 and self.cur_gate[i] >= len(self.gates))
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
+                self.cur_gate[i] = 0
 
         return self._observation.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
@@ -185,7 +197,9 @@ class QuadcopterGatesVec(VecEnv):
             self.randomize_gates = False
             self.gates = np.array([
                 [0.0, rand.uniform(0.0, 5.0), rand.uniform(0.0, 5.0)],
-                [0.0, rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
+                [rand.uniform(-2.0, 2.0), rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
+                [rand.uniform(-2.0, 2.0), rand.uniform(7.0, 15.0), rand.uniform(10.0, 15.0)],
+                [rand.uniform(-4.0, 4.0), rand.uniform(8.0, 16.0), rand.uniform(17.0, 25.0)]
             ], dtype=np.float32)
 
         self.wrapper.reset(self._observation)
@@ -214,7 +228,7 @@ class QuadcopterGatesVec(VecEnv):
     def connectUnity(self):
         self.wrapper.connectUnity()
 
-    def addGate(self, positions: np.ndarray):
+    def addGate(self, positions: np.ndarray, rotations: np.ndarray):
         """Adds a static gate to each drone environment.
 
         Adds to recurring memory of gates for simulation training.
@@ -223,7 +237,7 @@ class QuadcopterGatesVec(VecEnv):
         Args:
             positions: matrix of [X,Y,Z] coordinates for each gate.
         """
-        self.wrapper.addGate(positions)
+        self.wrapper.addGate(positions, rotations)
         self.gates = positions.copy()
 
     def disconnectUnity(self):

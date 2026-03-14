@@ -20,23 +20,22 @@ from flightgym import QuadrotorEnv_v1
 # Trains drone on its ability to hover.
 # Allows for rendering via unity and saved weights
 
-# Use: python3 train_drone.py
+# Use: python3 train_drone_hover.py
 #   --render <1/0>  (default 1)
 #   --train <1/0>   (default 0)
 #   --save_dir <save_dir>   (default ./saved)
 #   --seed <seed_int>   (default 0)
 #   --weight <saved_quadcopter_zip> (can also use -w)
 # Example:
-# python3 train_drone.py
+# python3 train_drone_hover.py
 #   --render 1
 #   --train 0
 #   --weight ./saved/quadrotor_env.zip
 
-# if hover: rot_mult. if gates: randomize_gates
 class CurriculumCallback(BaseCallback):
     def _on_rollout_start(self) -> None:
         self.training_env.curriculum_callback()
-        self.logger.record("curriculum/randomize_gates", self.training_env.randomize_gates)
+        self.logger.record("curriculum/rot_mult", self.training_env.rot_mult)
 
     def _on_step(self) -> bool:
         return True
@@ -79,14 +78,10 @@ def main():
     yaml.dump(cfg, stream)
 
     # hovers
-    #env = QuadcopterHoverVec(
-    #    QuadrotorEnv_v1(stream.getvalue(), False),
-    #    GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
-    #    GOAL_RPY=np.array([0.0, 0.0, 0.0])
-    #)
-    # flies throgh gates
-    env = QuadcopterGatesVec(
+    env = QuadcopterHoverVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
+        GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
+        GOAL_RPY=np.array([0.0, 0.0, 0.0])
     )
 
     # set random seed
@@ -97,12 +92,6 @@ def main():
         rsg_root = str(Path(__file__).resolve().parent)
         log_dir = rsg_root + '/saved'
         saver = U.ConfigurationSaver(log_dir=log_dir)
-
-    # add gates to environment
-    env.addGate(np.array([
-        [0.0, 4, 5],
-        [0.0, 11, 7],
-    ], dtype=np.float32))
 
     if args.train:
         if args.weight == "./saved/quadrotor_env.zip":

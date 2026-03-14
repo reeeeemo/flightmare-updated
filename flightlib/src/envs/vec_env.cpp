@@ -191,14 +191,16 @@ bool VecEnv<EnvBase>::setUnity(bool render) {
 }
 
 template<typename EnvBase>
-void VecEnv<EnvBase>::addGate(Ref<MatrixRowMajor<>> positions) {
+void VecEnv<EnvBase>::addGate(Ref<MatrixRowMajor<>> positions, Ref<MatrixRowMajor<>> rotations) {
   if (unity_bridge_ptr_ == nullptr) return;
+  if (positions.rows() != rotations.rows()) return;
 
   for (int i = 0; i < positions.rows(); i++) {
     Vector<3> pos = positions.row(i).transpose();
+    Vector<4> rot = rotations.row(i).transpose();
     std::shared_ptr<StaticObject> gate = std::make_shared<StaticGate>("unity_gate_" + std::to_string(gateCounter), "rpg_gate");
     gate->setPosition(pos);
-    gate->setQuaternion(Quaternion(std::cos(M_PI_4), 0.0, std::sin(1 * M_PI_4), 0.0));
+    gate->setQuaternion(Quaternion(rot[0], rot[1], rot[2], rot[3]));
     unity_bridge_ptr_->addStaticObject(gate);
     gateCounter += 1;
   }

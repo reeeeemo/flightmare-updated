@@ -56,7 +56,7 @@ class VecEnv {
   bool setUnity(bool render);
   bool connectUnity();
   void disconnectUnity();
-  void addGate(Ref<MatrixRowMajor<>> positions);
+  void addGate(Ref<MatrixRowMajor<>> positions, Ref<MatrixRowMajor<>> rotations);
 
   // public functions
   inline int getSeed(void) { return seed_; };
