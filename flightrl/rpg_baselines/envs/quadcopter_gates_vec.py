@@ -60,8 +60,14 @@ class QuadcopterGatesVec(VecEnv):
         self.ang_vel_coef = -0.0001
         self.act_coef = -0.0002
 
+        # gate metrics
+        self.half_w = 1.0  # TODO: get width of gate
+        self.half_h = 1.0  # TODO: get height of gate
+        self.gate_depth = 0.3  # TODO: get depth of gate
+
         # goal gates
         self.gates = np.zeros((0, 3), dtype=np.float32)
+        self.rot_mats = np.zeros((0, 3, 3), dtype=np.float32)
         self.cur_gate = np.zeros(self.num_envs, dtype=int)
         self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
 
@@ -89,8 +95,6 @@ class QuadcopterGatesVec(VecEnv):
         gate_dist = np.linalg.norm(gate_dir, axis=1, keepdims=True).clip(min=1e-6)
         vel_towards_gate = np.sum(vel * (gate_dir / gate_dist), axis=1)
 
-        # pos_penalty = self.pos_coef * np.sum(gate_dir**2, axis=1) / (gate_dist.squeeze() + 1e-6)
-
         # position, orientation, linear and angular velocity
         # and penalty for having to use an action
         return (
@@ -99,8 +103,7 @@ class QuadcopterGatesVec(VecEnv):
             self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +
             self.act_coef * np.linalg.norm(action, axis=1)
         ).astype(np.float32)
-        # 0.05 was old survival bonus
-
+    
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
 
@@ -128,18 +131,32 @@ class QuadcopterGatesVec(VecEnv):
         else:
             info = [{} for i in range(self.num_envs)]
 
-
+        # update current gate selection + give reward if position is close
         for i in range(self.num_envs):
-            # update current gate selection + give reward if position is close
-            dist = np.linalg.norm(self._observation[i, 0:3])
-            if dist < 1.5:
-                if self._reward[i] != -1:  # or whatever the crash reward is
-                    self._reward[i] += 2.0
+            # get coordinates in gate local space:
+            # idx 0 = left/right offset from gate center
+            # idx 1 = distance along the approach axis (forward/backward)
+            # idx 2 = up/down offset from gate center
+            local_positions = self.rot_mats[self.cur_gate[i]].T @ self._observation[i, 0:3]
+
+            ### find whether drone has gone through or hit gate
+            on_plane = abs(local_positions[1]) < self.gate_depth
+            in_opening = (
+                abs(local_positions[0]) < self.half_w 
+                and abs(local_positions[2]) < self.half_h
+            )
+            if on_plane and not in_opening:
+                self._reward[i] = -1
+                self._done[i] = True
+            elif on_plane and in_opening:
+                self._reward[i] += 2.0
                 self.cur_gate[i] += 1
-                if self.cur_gate[i] >= len(self.gates):
-                    self._done[i] = True
-                else:
-                    self._observation[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
+            
+            if self.cur_gate[i] >= len(self.gates):
+                self._done[i] = True
+            else:
+                self._observation[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
+
 
             # if done, give a time-based bonus (lower the better)
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
@@ -195,12 +212,12 @@ class QuadcopterGatesVec(VecEnv):
 
         if self.randomize_gates:
             self.randomize_gates = False
-            self.gates = np.array([
-                [0.0, rand.uniform(0.0, 5.0), rand.uniform(0.0, 5.0)],
-                [rand.uniform(-2.0, 2.0), rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
-                [rand.uniform(-2.0, 2.0), rand.uniform(7.0, 15.0), rand.uniform(10.0, 15.0)],
-                [rand.uniform(-4.0, 4.0), rand.uniform(8.0, 16.0), rand.uniform(17.0, 25.0)]
-            ], dtype=np.float32)
+            #self.gates = np.array([
+            #    [0.0, rand.uniform(0.0, 5.0), rand.uniform(0.0, 5.0)],
+            #    [rand.uniform(-2.0, 2.0), rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
+            #    [rand.uniform(-2.0, 2.0), rand.uniform(7.0, 15.0), rand.uniform(10.0, 15.0)],
+            #    [rand.uniform(-4.0, 4.0), rand.uniform(8.0, 16.0), rand.uniform(17.0, 25.0)]
+            #], dtype=np.float32)
 
         self.wrapper.reset(self._observation)
         return self._observation.copy()
@@ -239,6 +256,7 @@ class QuadcopterGatesVec(VecEnv):
         """
         self.wrapper.addGate(positions, rotations)
         self.gates = positions.copy()
+        self.rot_mats = self.convert_quat_to_rot_mat(rotations.copy())
 
     def disconnectUnity(self):
         self.wrapper.disconnectUnity()
@@ -268,6 +286,7 @@ class QuadcopterGatesVec(VecEnv):
     def curriculum_callback(self):
         """Increase difficulty of gate problem if consistently successful.
         """
+        return  # add this after fix gate collision
         if not self.ep_successes:
             return
         
@@ -275,6 +294,22 @@ class QuadcopterGatesVec(VecEnv):
         if success_rate >= 0.9:
             self.randomize_gates = True
             self.ep_successes.clear()
+    
+    def convert_quat_to_rot_mat(self, q: np.ndarray):
+        """Converts a quaternion to a rotation matrix."""
+        # https://automaticaddison.com/how-to-convert-a-quaternion-to-a-rotation-matrix/
+        w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+        mats = np.zeros((len(w), 3, 3), dtype=np.float32)
+        mats[:, 0, 0] = 2 * (w**2 + x**2) - 1
+        mats[:, 0, 1] = 2 * (x*y - w*z)
+        mats[:, 0, 2] = 2 * (x*z + w*y)
+        mats[:, 1, 0] = 2 * (x*y + w*z)
+        mats[:, 1, 1] = 2 * (w**2 + y**2) - 1
+        mats[:, 1, 2] = 2 * (y*z - w*x)
+        mats[:, 2, 0] = 2 * (x*z - w*y)
+        mats[:, 2, 1] = 2 * (y*z + w*x)
+        mats[:, 2, 2] = 2 * (w**2 + z**2) - 1
+        return mats
 
     def step_async(self, actions):
         self._async_actions = actions

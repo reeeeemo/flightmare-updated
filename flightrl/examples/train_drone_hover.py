@@ -11,7 +11,6 @@ from stable_baselines3.ppo import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from rpg_baselines.common.test_model import test_model
 from rpg_baselines.envs.quadcopter_hover_vec import QuadcopterHoverVec
-from rpg_baselines.envs.quadcopter_gates_vec import QuadcopterGatesVec
 import rpg_baselines.common.util as U
 
 from flightgym import QuadrotorEnv_v1

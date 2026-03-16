@@ -11,7 +11,6 @@ import random as rand
 from stable_baselines3.ppo import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from rpg_baselines.common.test_model import test_model
-from rpg_baselines.envs.quadcopter_hover_vec import QuadcopterHoverVec
 from rpg_baselines.envs.quadcopter_gates_vec import QuadcopterGatesVec
 import rpg_baselines.common.util as U
 
@@ -101,17 +100,17 @@ def main():
             [0, 7.5, 5],
             [4, 10, 10],
             [8, 13, 15],
-            [12, 10, -10],
-            [16, 7.5, -5],
+            [12, 10, 10],
+            [16, 7.5, 5],
             [20, 5, 0]
         ], dtype=np.float32)
-        rotations = np.array([
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/2)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/2)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0],
-            [-np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/2)), 0.0],
-            [-np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/2)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0]
+        rotations = np.array([  # w, x, y, z
+            [-np.cos(np.pi/8), 0, 0, np.sin(np.pi/8)],
+            [np.cos(np.pi/4), np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
+            [np.cos(np.pi/4), np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
+            [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
+            [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
+            [np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0]
         ], dtype=np.float32)
     else:
         positions = np.array([
@@ -155,7 +154,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
         # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
         model.learn(
-            total_timesteps=int(1e7),  # 1.3e7
+            total_timesteps=int(2e7),  # 1.3e7
             progress_bar=False,
             reset_num_timesteps=False,
             callback=CurriculumCallback()
