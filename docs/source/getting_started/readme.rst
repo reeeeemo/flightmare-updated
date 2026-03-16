@@ -76,7 +76,7 @@ The simulator
 Flightmare is an open-source simulator for quadrotors. 
 It is composed of two main components: 
 a configurable rendering engine built on Unity and a flexible physics engine for dynamics simulation. 
-In addition, it has OpenAI gym-style python wrapper for reinforcement learning tasks and a flexible interface with stable baselines for solving these tasks with deep RL algorithms. 
+In addition, it has an OpenAI gym-style python wrapper for reinforcement learning tasks and a flexible interface with `stable_baselines3` for solving these tasks with deep RL algorithms. 
 Flightmare provides ROS wrapper to interface with popular ROS packages, such as `high_mpc <https://github.com/uzh-rpg/high_mpc>`_ for learning-based mpc, `rpg_mpc <https://github.com/uzh-rpg/rpg_mpc>`_ for advanced quadrotor controller, and `rpg_quadrotor_control <https://github.com/uzh-rpg/rpg_quadrotor_control>`_ for hard-ware-in-the-loop simulation.
 
 ..  source of the image

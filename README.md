@@ -18,17 +18,23 @@ Flightmare can be used for various applications, including path-planning, reinfo
 
 [![FLIGHTMARE VIDEO](./docs/flightmare_main.png)](https://youtu.be/m9Mx1BCNGFU)
 
-## Specifications
-- Python 3.9
-- Ubuntu 20.04
-- CUDA 12.4
+## Updated Content
+- While Flightmare is originally intended for Python 3.6 and Ubuntu 18.04, updates have been made to include **Python 3.9** and **Ubuntu 20.04**, which is what the Docker runs on. This also includes support for CUDA devices up to **CUDA 12.4**.
+- Updated Dockerfile and `.devcontainer` for a streamlined coding process.
+- Added support for stable_baselines3 and PyTorch so models such as PPO can be run.
+- 2 New environments for reinforcement learning based training on a drone learning to hover and fly through gate objects.
+  - Includes the ability to add gates from Python versus hard-coding in C++ then recompiling
+  - Can also configure the initial random rotation of the drone at the starting state
+  - Includes support for cumulative learning of the model and checking gate collision without rigidbodies.
+
+> The updated content only includes `flightrl` and `flightlib`, as of the time of writing, no work has been done to update and test `flightros` or `flightrender` (we have used unity standalone for any rendering). Proceed with caution.
 
 ## Installation
 
-Run `docker build -t flightmare .` to start.
+Build the dockerfile using `docker build -t flightmare .`.
 
 - If only running on docker
-  - Run `docker run --gpus all -it -d flightmare`
+  - `docker run --gpus all -it -d flightmare`
 
 
 - Docker w/Visual Studio Code
@@ -38,6 +44,8 @@ Run `docker build -t flightmare .` to start.
 
 After docker is built, to run anything in `flightrl`:
 - Run `pip3 install .` inside of `flightrl`
+
+> Run `export FLIGHTMARE_PATH=/workspace` if running into any other issues unrelated to packages.
 
 
 ## Publication
