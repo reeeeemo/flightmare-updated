@@ -96,6 +96,7 @@ def main():
     # add gates to environment
     # TODO: rework randomly placed gates
     if not args.random:
+        """
         positions = np.array([
             [0, 7.5, 5],
             [4, 10, 10],
@@ -111,6 +112,14 @@ def main():
             [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
             [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
             [np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0]
+        ], dtype=np.float32)"""
+        positions = np.array([
+            [0, 7.5, 5],
+            [0, 11.5, 5]
+        ], dtype=np.float32)
+        rotations = np.array([
+            [np.cos(np.pi/2), 0, np.sin(np.pi/2), 0.0],
+            [np.cos(np.pi/2), 0, np.sin(np.pi/2), 0.0]
         ], dtype=np.float32)
     else:
         positions = np.array([

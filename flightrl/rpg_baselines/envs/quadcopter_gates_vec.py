@@ -60,10 +60,10 @@ class QuadcopterGatesVec(VecEnv):
         self.ang_vel_coef = -0.0001
         self.act_coef = -0.0002
 
-        # gate metrics
-        self.half_w = 1.0  # TODO: get width of gate
-        self.half_h = 1.0  # TODO: get height of gate
-        self.gate_depth = 0.3  # TODO: get depth of gate
+        # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
+        self.half_w = 0.5  # half width of gate
+        self.half_h = 0.5  # half height of gate
+        self.gate_depth = 1.0  # full depth of gate
 
         # goal gates
         self.gates = np.zeros((0, 3), dtype=np.float32)
