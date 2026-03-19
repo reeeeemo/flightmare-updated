@@ -58,8 +58,6 @@ def parser():
                         help="Random seed")
     parser.add_argument('-w', '--weight', type=str, default='./saved/quadrotor_env.zip',
                         help='trained weight path')
-    parser.add_argument("--random", type=int, default=0,
-                        help="Random gate initialization")
     return parser
 
 def main():
@@ -94,46 +92,25 @@ def main():
         saver = U.ConfigurationSaver(log_dir=log_dir)
 
     # add gates to environment
-    # TODO: rework randomly placed gates
-    if not args.random:
-        """
-        positions = np.array([
-            [0, 7.5, 5],
-            [4, 10, 10],
-            [8, 13, 15],
-            [12, 10, 10],
-            [16, 7.5, 5],
-            [20, 5, 0]
-        ], dtype=np.float32)
-        rotations = np.array([  # w, x, y, z
-            [-np.cos(np.pi/8), 0, 0, np.sin(np.pi/8)],
-            [np.cos(np.pi/4), np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0]
-        ], dtype=np.float32)"""
-        positions = np.array([
-            [0, 7.5, 5],
-            [0, 11.5, 5]
-        ], dtype=np.float32)
-        rotations = np.array([
-            [np.cos(np.pi/2), 0, np.sin(np.pi/2), 0.0],
-            [np.cos(np.pi/2), 0, np.sin(np.pi/2), 0.0]
-        ], dtype=np.float32)
-    else:
-        positions = np.array([
-            [0.0, rand.uniform(0.0, 5.0), rand.uniform(0.0, 5.0)],
-            [rand.uniform(-2.0, 2.0), rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
-            [rand.uniform(-2.0, 2.0), rand.uniform(7.0, 15.0), rand.uniform(10.0, 15.0)],
-            [rand.uniform(-4.0, 4.0), rand.uniform(8.0, 16.0), rand.uniform(17.0, 25.0)]
-        ], dtype=np.float32)
-        rotations = np.array([
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0]
-        ], dtype=np.float32)    
+    positions = np.array([
+        [0, 7.5, 7],
+        [0, 13.5, 10],
+        [3, 19.5, 12],
+        [9, 21.5, 12],
+        [15, 19.5, 12],
+        [18, 13.5, 10],
+        [18, 7.5, 7]
+    ], dtype=np.float32)
+    rotations = np.array([
+        [1, 0, 0, 0],
+        [np.cos(np.pi/8), np.sin(np.pi/8), 0, 0], # tilted up
+        [-np.cos(np.pi/12), 0, 0, np.sin(np.pi/12)], # tiled right
+        [-np.cos(np.pi/4), 0, 0, np.sin(np.pi/4)], # right
+        [np.cos(np.pi/3), 0, 0, -np.sin(np.pi/3)], # tiled left
+        [np.cos(np.pi/12), np.sin(np.pi/12), 0, 0],
+        [1, 0, 0, 0]
+    ], dtype=np.float32)
+
 
     env.addGate(positions, rotations)
 

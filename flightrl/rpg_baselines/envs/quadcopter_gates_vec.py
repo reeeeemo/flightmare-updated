@@ -22,19 +22,24 @@ class QuadcopterGatesVec(VecEnv):
                  max_memory_space: int = 200
          ):
         self.wrapper = impl
-        self.num_obs = self.wrapper.getObsDim()
+
+        # get observations and actions # from wrapper and add others
+        self.num_drone_obs = self.wrapper.getObsDim()
+        self.num_full_obs = self.num_drone_obs + 19
         self.num_acts = self.wrapper.getActDim()
         self.max_episode_steps = 300
-        print(f"[OBSERVATION STATE DIM]: {self.num_obs}")
+        print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
         # [x_to_near_gate, y_to_near_gate, z_to_near_gate]
-        # [yaw, pitch, roll]
+        # [yaw, pitch, roll] -> should be a rot mat instead of just yaw pitch roll
         # [x_vel, y_vel, z_vel]
         # [roll, pitch, yaw vel]
+        # [gate_corner_x, gate_corner_y, gate_corner_z] x 4
+        # [previous_thrust, prev_pitch, prev_yaw, prev_roll]
         self._observation_space = spaces.Box(
-            np.ones(self.num_obs) * -np.inf,
-            np.ones(self.num_obs) * np.inf, dtype=np.float32)
+            np.ones(self.num_full_obs) * -np.inf,
+            np.ones(self.num_full_obs) * np.inf, dtype=np.float32)
         
         # [collective thrust, roll, pitch, yaw] rates
         self._action_space = spaces.Box(
@@ -43,8 +48,8 @@ class QuadcopterGatesVec(VecEnv):
             dtype=np.float32)
         
         # numpy array of all drone obs, rews since multi environments
-        self._observation = np.zeros([self.num_envs, self.num_obs],
-                                     dtype=np.float32)
+        self._drone_obs = np.zeros([self.num_envs, self.num_drone_obs], dtype=np.float32)
+        self._full_obs = np.zeros([self.num_envs, self.num_full_obs], dtype=np.float32)
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
         self._done = np.zeros((self.num_envs), dtype=np.bool_)
         self.rewards = [[] for _ in range(self.num_envs)]
@@ -61,8 +66,8 @@ class QuadcopterGatesVec(VecEnv):
         self.act_coef = -0.0002
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
-        self.half_w = 0.5  # half width of gate
-        self.half_h = 0.5  # half height of gate
+        self.half_w = 0.65  # half width of gate
+        self.half_h = 0.65  # half height of gate
         self.gate_depth = 1.0  # full depth of gate
 
         # goal gates
@@ -87,11 +92,11 @@ class QuadcopterGatesVec(VecEnv):
             reward based on drone observation state and current action
         """
         
-        gate_dir = self._observation[:, 0:3]
-        vel = self._observation[:, 6:9]
-        ang_vel = self._observation[:, 9:12]
+        gate_dir = self._full_obs[:, 0:3]
+        vel = self._full_obs[:, 12:15]
+        ang_vel = self._full_obs[:, 15:18]
 
-        # compute normalized gate direction then velocity twrds gate
+        # compute normalized gate direction then velocity twrds gate and gate normal
         gate_dist = np.linalg.norm(gate_dir, axis=1, keepdims=True).clip(min=1e-6)
         vel_towards_gate = np.sum(vel * (gate_dir / gate_dist), axis=1)
 
@@ -104,6 +109,21 @@ class QuadcopterGatesVec(VecEnv):
             self.act_coef * np.linalg.norm(action, axis=1)
         ).astype(np.float32)
     
+
+    def _update_observation(self):
+        """Updates observations recieved from C++ wrapper."""
+        # update to relative pos between gate and drone
+        self.drone_pos = self._drone_obs[:, 0:3].copy()
+        self._full_obs[:, 0:3] = self.gates[self.cur_gate] - self.drone_pos
+
+        # move other observations
+        self._full_obs[:, 12:15] = self._drone_obs[:, 6:9].copy()
+        self._full_obs[:, 15:18] = self._drone_obs[:, 9:12].copy()
+
+        # update angles to 9d rotation mat
+        # see https://arxiv.org/pdf/2509.17274 section III and IV for full details
+        self._full_obs[:, 3:12] = self.convert_euler_to_rot_mat(self._drone_obs[:, 3:6].copy())
+
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
 
@@ -113,11 +133,9 @@ class QuadcopterGatesVec(VecEnv):
             observation, reward, done, env information
         """
         # values are clamped in c++ code
-        self.wrapper.step(action, self._observation,
+        self.wrapper.step(action, self._drone_obs,
                           self._reward, self._done, self._extraInfo)
-        # update observation to estimated gate position - estimated drone pos
-        self.drone_pos = self._observation[:, 0:3].copy()
-        self._observation[:, 0:3] = self.gates[self.cur_gate] - self.drone_pos
+        self._update_observation()
 
         # compute reward and if -1 dont adjust, but if 0 we update reward
         step_reward = self._compute_reward(action)
@@ -137,7 +155,7 @@ class QuadcopterGatesVec(VecEnv):
             # idx 0 = left/right offset from gate center
             # idx 1 = distance along the approach axis (forward/backward)
             # idx 2 = up/down offset from gate center
-            local_positions = self.rot_mats[self.cur_gate[i]].T @ self._observation[i, 0:3]
+            local_positions = self.rot_mats[self.cur_gate[i]].T @ self._full_obs[i, 0:3]
 
             ### find whether drone has gone through or hit gate
             on_plane = abs(local_positions[1]) < self.gate_depth
@@ -155,7 +173,7 @@ class QuadcopterGatesVec(VecEnv):
             if self.cur_gate[i] >= len(self.gates):
                 self._done[i] = True
             else:
-                self._observation[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
+                self._full_obs[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
 
 
             # if done, give a time-based bonus (lower the better)
@@ -178,7 +196,7 @@ class QuadcopterGatesVec(VecEnv):
                 self.rewards[i].clear()
                 self.cur_gate[i] = 0
 
-        return self._observation.copy(), self._reward.copy(), \
+        return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
 
     def stepUnity(self, action, send_id):
@@ -188,7 +206,7 @@ class QuadcopterGatesVec(VecEnv):
             action: [normalized thrust, roll, pitch, yaw] rates
             send_id: ID for unity enivonrment
         """
-        receive_id = self.wrapper.stepUnity(action, self._observation,
+        receive_id = self.wrapper.stepUnity(action, self._drone_obs,
                                             self._reward, self._done, self._extraInfo, send_id)
 
         return receive_id
@@ -212,15 +230,10 @@ class QuadcopterGatesVec(VecEnv):
 
         if self.randomize_gates:
             self.randomize_gates = False
-            #self.gates = np.array([
-            #    [0.0, rand.uniform(0.0, 5.0), rand.uniform(0.0, 5.0)],
-            #    [rand.uniform(-2.0, 2.0), rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
-            #    [rand.uniform(-2.0, 2.0), rand.uniform(7.0, 15.0), rand.uniform(10.0, 15.0)],
-            #    [rand.uniform(-4.0, 4.0), rand.uniform(8.0, 16.0), rand.uniform(17.0, 25.0)]
-            #], dtype=np.float32)
 
-        self.wrapper.reset(self._observation)
-        return self._observation.copy()
+        self.wrapper.reset(self._drone_obs)
+        self._update_observation()
+        return self._full_obs.copy()
 
     def reset_and_update_info(self):
         return self.reset(), self._update_epi_info()
@@ -267,7 +280,7 @@ class QuadcopterGatesVec(VecEnv):
 
     @property
     def observation_space(self):
-        return self._observation_space
+        return self.observation_space
 
     @property
     def action_space(self):
@@ -295,6 +308,21 @@ class QuadcopterGatesVec(VecEnv):
             self.randomize_gates = True
             self.ep_successes.clear()
     
+    
+    def convert_euler_to_rot_mat(self, euler: np.ndarray):
+        """Converts a batch of euler angles to a rotation matrix."""
+        # http://close-range.com/docs/Computing_Euler_angles_from_a_rotation_matrix.pdf (its reversed)
+        y, p, r = euler[:, 0], euler[:, 1], euler[:, 2]
+        cy, sy = np.cos(y), np.sin(y)
+        cp, sp = np.cos(p), np.sin(p)
+        cr, sr = np.cos(r), np.sin(r)
+
+        c0 = np.stack([cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr], axis=1)
+        c1 = np.stack([sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr], axis=1)
+        c2 = np.stack([-sp, cp*sr, cp*cr], axis=1)
+
+        return np.concatenate([c0, c1, c2], axis=1)
+
     def convert_quat_to_rot_mat(self, q: np.ndarray):
         """Converts a quaternion to a rotation matrix."""
         # https://automaticaddison.com/how-to-convert-a-quaternion-to-a-rotation-matrix/
