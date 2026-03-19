@@ -34,7 +34,7 @@ class QuadcopterHoverVec(VecEnv):
         # [yaw, pitch, roll]
         # [x_vel, y_vel, z_vel]
         # [roll, pitch, yaw vel]
-        self._drone_obs_space = spaces.Box(
+        self._observation_space = spaces.Box(
             np.ones(self.num_full_obs) * -np.inf,
             np.ones(self.num_full_obs) * np.inf, dtype=np.float32)
         
@@ -218,7 +218,7 @@ class QuadcopterHoverVec(VecEnv):
 
     @property
     def observation_space(self):
-        return self._drone_obs_space
+        return self._observation_space
 
     @property
     def action_space(self):

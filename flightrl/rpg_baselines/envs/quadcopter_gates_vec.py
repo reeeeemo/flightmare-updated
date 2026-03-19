@@ -280,7 +280,7 @@ class QuadcopterGatesVec(VecEnv):
 
     @property
     def observation_space(self):
-        return self.observation_space
+        return self._observation_space
 
     @property
     def action_space(self):
