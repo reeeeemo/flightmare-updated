@@ -73,6 +73,8 @@ class QuadcopterHoverVec(VecEnv):
         self.rot_mult = 0.2  # rotation multiplier. also in yaml.
         self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
 
+        self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
+
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
 
@@ -113,6 +115,8 @@ class QuadcopterHoverVec(VecEnv):
         # see https://arxiv.org/pdf/2509.17274 section III and IV for full details
         self._full_obs[:, 3:12] = self.convert_euler_to_rot_mat(self._drone_obs[:, 3:6].copy())
 
+        self._full_obs[:, 18:22] = self._prev_action
+
 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
@@ -125,8 +129,8 @@ class QuadcopterHoverVec(VecEnv):
         # values are clamped in c++ code
         self.wrapper.step(action, self._drone_obs,
                           self._reward, self._done, self._extraInfo)
-
         self._update_observation()
+        self._prev_action = action.copy()
 
         # compute reward and if -1 dont adjust, but if 0 we update reward
         step_reward = self._compute_reward(action)
@@ -151,6 +155,8 @@ class QuadcopterHoverVec(VecEnv):
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
+
+        self._prev_action[self._done] = 0
 
         return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
@@ -182,6 +188,7 @@ class QuadcopterHoverVec(VecEnv):
     def reset(self):
         """Resets drone environment."""
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
+        self._prev_action[:] = 0
         self.wrapper.reset(self._drone_obs)
         self._update_observation()
         return self._full_obs.copy()

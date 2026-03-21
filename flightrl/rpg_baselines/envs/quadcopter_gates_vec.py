@@ -76,8 +76,11 @@ class QuadcopterGatesVec(VecEnv):
         self.cur_gate = np.zeros(self.num_envs, dtype=int)
         self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
 
+        # curriculum learning vars
         self.ep_successes = deque(maxlen=max_memory_space)
         self.randomize_gates = False
+
+        self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
 
 
     def seed(self, seed=0):
@@ -100,13 +103,12 @@ class QuadcopterGatesVec(VecEnv):
         gate_dist = np.linalg.norm(gate_dir, axis=1, keepdims=True).clip(min=1e-6)
         vel_towards_gate = np.sum(vel * (gate_dir / gate_dist), axis=1)
 
-        # position, orientation, linear and angular velocity
-        # and penalty for having to use an action
         return (
-            self.pos_coef * gate_dist.squeeze() + 
-            self.lin_vel_coef * vel_towards_gate +
-            self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +
-            self.act_coef * np.linalg.norm(action, axis=1)
+            self.pos_coef * gate_dist.squeeze() +  # small positional penalty for being further away from gate
+            self.lin_vel_coef * vel_towards_gate +  # velocity towards gate
+            self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +  # small penalty towards unstable angular vel
+            self.act_coef * np.linalg.norm(action, axis=1) +  # small penalty for using an action
+            self.act_coef * np.linalg.norm(action - self._prev_action, axis=1) # penalize abrupt changes
         ).astype(np.float32)
     
 
@@ -124,6 +126,9 @@ class QuadcopterGatesVec(VecEnv):
         # see https://arxiv.org/pdf/2509.17274 section III and IV for full details
         self._full_obs[:, 3:12] = self.convert_euler_to_rot_mat(self._drone_obs[:, 3:6].copy())
 
+        # encase previous action
+        self._full_obs[:, 18:22] = self._prev_action
+
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
 
@@ -136,6 +141,7 @@ class QuadcopterGatesVec(VecEnv):
         self.wrapper.step(action, self._drone_obs,
                           self._reward, self._done, self._extraInfo)
         self._update_observation()
+        self._prev_action = action.copy()
 
         # compute reward and if -1 dont adjust, but if 0 we update reward
         step_reward = self._compute_reward(action)
@@ -179,10 +185,14 @@ class QuadcopterGatesVec(VecEnv):
             # if done, give a time-based bonus (lower the better)
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
                 self._reward[i] += 2.0 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
-            # if done, no crashes, and drone did not go thru all gates, give penalty
+            # if done and drone did not go thru all gates, give penalty
             elif self._done[i] and self.cur_gate[i] < len(self.gates):
-                if self._reward[i] != -1:
-                    self._reward[i] -= 2.0
+                speed_penalty = -(1 + np.linalg.norm(self._full_obs[i, 12:15]))
+                base_penalty = -10
+                if self._reward[i] != -1:  # if not crashed, just speed penalty
+                    self._reward[i] += speed_penalty
+                else:
+                    self._reward[i] += base_penalty + speed_penalty
 
             # update reward information if environment is finished
             # update memory to know whether drone crashes (-1 penalty) or not
@@ -195,6 +205,7 @@ class QuadcopterGatesVec(VecEnv):
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
                 self.cur_gate[i] = 0
+        self._prev_action[self._done] = 0
 
         return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
@@ -227,6 +238,7 @@ class QuadcopterGatesVec(VecEnv):
         """Resets drone environment."""
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
         self.cur_gate = np.zeros(self.num_envs, dtype=int)
+        self._prev_action[:] = 0
 
         if self.randomize_gates:
             self.randomize_gates = False
