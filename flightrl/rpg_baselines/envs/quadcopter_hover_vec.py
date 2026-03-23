@@ -24,7 +24,7 @@ class QuadcopterHoverVec(VecEnv):
          ):
         self.wrapper = impl
         self.num_drone_obs = self.wrapper.getObsDim()
-        self.num_full_obs = self.num_drone_obs + 19
+        self.num_full_obs = self.num_drone_obs + 22  # 19 if using prev weights
         self.num_acts = self.wrapper.getActDim()
         self.max_episode_steps = 300
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
@@ -226,6 +226,10 @@ class QuadcopterHoverVec(VecEnv):
     @property
     def observation_space(self):
         return self._observation_space
+    
+    @property
+    def render_mode(self):
+        return None
 
     @property
     def action_space(self):

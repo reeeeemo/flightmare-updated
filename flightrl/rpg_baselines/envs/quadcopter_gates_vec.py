@@ -25,7 +25,7 @@ class QuadcopterGatesVec(VecEnv):
 
         # get observations and actions # from wrapper and add others
         self.num_drone_obs = self.wrapper.getObsDim()
-        self.num_full_obs = self.num_drone_obs + 19
+        self.num_full_obs = self.num_drone_obs + 22  # 19 if using prev weights 
         self.num_acts = self.wrapper.getActDim()
         self.max_episode_steps = 300
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
@@ -64,10 +64,11 @@ class QuadcopterGatesVec(VecEnv):
         self.lin_vel_coef = 0.04
         self.ang_vel_coef = -0.0001
         self.act_coef = -0.0002
+        self.offset_coef = 2
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
-        self.half_w = 0.65  # half width of gate
-        self.half_h = 0.65  # half height of gate
+        self.half_w = 0.5  # half width of gate
+        self.half_h = 0.5  # half height of gate
         self.gate_depth = 1.0  # full depth of gate
 
         # goal gates
@@ -95,6 +96,7 @@ class QuadcopterGatesVec(VecEnv):
             reward based on drone observation state and current action
         """
         
+        # compute action-based rewards
         gate_dir = self._full_obs[:, 0:3]
         vel = self._full_obs[:, 12:15]
         ang_vel = self._full_obs[:, 15:18]
@@ -103,57 +105,14 @@ class QuadcopterGatesVec(VecEnv):
         gate_dist = np.linalg.norm(gate_dir, axis=1, keepdims=True).clip(min=1e-6)
         vel_towards_gate = np.sum(vel * (gate_dir / gate_dist), axis=1)
 
-        return (
+        step_rew = (
             self.pos_coef * gate_dist.squeeze() +  # small positional penalty for being further away from gate
             self.lin_vel_coef * vel_towards_gate +  # velocity towards gate
             self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +  # small penalty towards unstable angular vel
-            self.act_coef * np.linalg.norm(action, axis=1) +  # small penalty for using an action
-            self.act_coef * np.linalg.norm(action - self._prev_action, axis=1) # penalize abrupt changes
+            self.act_coef * np.linalg.norm(action, axis=1) # small penalty for using an action
         ).astype(np.float32)
-    
 
-    def _update_observation(self):
-        """Updates observations recieved from C++ wrapper."""
-        # update to relative pos between gate and drone
-        self.drone_pos = self._drone_obs[:, 0:3].copy()
-        self._full_obs[:, 0:3] = self.gates[self.cur_gate] - self.drone_pos
-
-        # move other observations
-        self._full_obs[:, 12:15] = self._drone_obs[:, 6:9].copy()
-        self._full_obs[:, 15:18] = self._drone_obs[:, 9:12].copy()
-
-        # update angles to 9d rotation mat
-        # see https://arxiv.org/pdf/2509.17274 section III and IV for full details
-        self._full_obs[:, 3:12] = self.convert_euler_to_rot_mat(self._drone_obs[:, 3:6].copy())
-
-        # encase previous action
-        self._full_obs[:, 18:22] = self._prev_action
-
-    def step(self, action: np.ndarray):
-        """Computes step of drone in environment.
-
-        Args:
-            action: [normalized thrust, roll, pitch, yaw] rates
-        Returns:
-            observation, reward, done, env information
-        """
-        # values are clamped in c++ code
-        self.wrapper.step(action, self._drone_obs,
-                          self._reward, self._done, self._extraInfo)
-        self._update_observation()
-        self._prev_action = action.copy()
-
-        # compute reward and if -1 dont adjust, but if 0 we update reward
-        step_reward = self._compute_reward(action)
-        self._reward = np.where(self._done, self._reward, step_reward)
-
-        # update environments with additional info
-        if len(self._extraInfoNames) != 0:
-            info = [{'extra_info': {
-                self._extraInfoNames[j]: self._extraInfo[i, j] for j in range(0, len(self._extraInfoNames))
-            }} for i in range(self.num_envs)]
-        else:
-            info = [{} for i in range(self.num_envs)]
+        self._reward = np.where(self._done, self._reward, step_rew)
 
         # update current gate selection + give reward if position is close
         for i in range(self.num_envs):
@@ -173,7 +132,8 @@ class QuadcopterGatesVec(VecEnv):
                 self._reward[i] = -1
                 self._done[i] = True
             elif on_plane and in_opening:
-                self._reward[i] += 2.0
+                self._reward[i] += 1.0
+                self._reward[i] += 1.0 - self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
                 self.cur_gate[i] += 1
             
             if self.cur_gate[i] >= len(self.gates):
@@ -182,9 +142,9 @@ class QuadcopterGatesVec(VecEnv):
                 self._full_obs[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
 
 
-            # if done, give a time-based bonus (lower the better)
+            # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
-                self._reward[i] += 2.0 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
+                self._reward[i] += 10.0 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
             # if done and drone did not go thru all gates, give penalty
             elif self._done[i] and self.cur_gate[i] < len(self.gates):
                 speed_penalty = -(1 + np.linalg.norm(self._full_obs[i, 12:15]))
@@ -192,19 +152,76 @@ class QuadcopterGatesVec(VecEnv):
                 if self._reward[i] != -1:  # if not crashed, just speed penalty
                     self._reward[i] += speed_penalty
                 else:
-                    self._reward[i] += base_penalty + speed_penalty
+                    self._reward[i] += base_penalty
+    
 
+    def _update_observation(self):
+        """Updates observations recieved from C++ wrapper."""
+        # update to relative pos between gate and drone
+        self.drone_pos = self._drone_obs[:, 0:3].copy()
+        self._full_obs[:, 0:3] = self.gates[self.cur_gate] - self.drone_pos
+
+        # move other observations
+        self._full_obs[:, 12:15] = self._drone_obs[:, 6:9].copy()
+        self._full_obs[:, 15:18] = self._drone_obs[:, 9:12].copy()
+
+        # update angles to 9d rotation mat
+        # see https://arxiv.org/pdf/2509.17274 section III and IV for full details
+        self._full_obs[:, 3:12] = self.convert_euler_to_rot_mat(self._drone_obs[:, 3:6].copy())
+
+        # encase previous action
+        self._full_obs[:, 18:22] = self._prev_action
+
+        # get current gates (x,y,z) for all 4 corners
+        center = self.gates[self.cur_gate]
+        right = self.rot_mats[self.cur_gate, :, 0] * self.half_w
+        up = self.rot_mats[self.cur_gate, :, 2] * self.half_h
+
+        self._full_obs[:, 22:34] = np.concatenate([
+            (center + right + up) - self.drone_pos, # top right
+            (center - right + up) - self.drone_pos, # top left
+            (center + right - up) - self.drone_pos, # bottom right
+            (center - right - up) - self.drone_pos  # bottom left
+        ], axis=1)
+
+    def step(self, action: np.ndarray):
+        """Computes step of drone in environment.
+
+        Args:
+            action: [normalized thrust, roll, pitch, yaw] rates
+        Returns:
+            observation, reward, done, env information
+        """
+        # values are clamped in c++ code
+        self.wrapper.step(action, self._drone_obs,
+                          self._reward, self._done, self._extraInfo)
+        self._update_observation()
+        self._prev_action = action.copy()
+
+        # compute reward and if -1 dont adjust, but if 0 we update reward
+        self._compute_reward(action)
+
+        # update environments with additional info
+        if len(self._extraInfoNames) != 0:
+            info = [{'extra_info': {
+                self._extraInfoNames[j]: self._extraInfo[i, j] for j in range(0, len(self._extraInfoNames))
+            }} for i in range(self.num_envs)]
+        else:
+            info = [{} for i in range(self.num_envs)]
+
+        for i in range(self.num_envs):
             # update reward information if environment is finished
             # update memory to know whether drone crashes (-1 penalty) or not
             self.rewards[i].append(self._reward[i])
             if self._done[i]:
                 eplen = len(self.rewards[i])
                 eprew = sum(self.rewards[i])
-                self.ep_successes.append(self._reward[i] != -1 and self.cur_gate[i] >= len(self.gates))
+                self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
                 self.cur_gate[i] = 0
+
         self._prev_action[self._done] = 0
 
         return self._full_obs.copy(), self._reward.copy(), \
@@ -297,6 +314,10 @@ class QuadcopterGatesVec(VecEnv):
     @property
     def action_space(self):
         return self._action_space
+
+    @property
+    def render_mode(self):
+        return None
 
     @property
     def extra_info_names(self):

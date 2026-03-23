@@ -10,6 +10,7 @@ import random as rand
 
 from stable_baselines3.ppo import PPO
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.vec_env import VecNormalize
 from rpg_baselines.common.test_model import test_model
 from rpg_baselines.envs.quadcopter_gates_vec import QuadcopterGatesVec
 import rpg_baselines.common.util as U
@@ -58,6 +59,8 @@ def parser():
                         help="Random seed")
     parser.add_argument('-w', '--weight', type=str, default='./saved/quadrotor_env.zip',
                         help='trained weight path')
+    parser.add_argument('-wn', '--norm_weight', type=str, default='',
+                        help='trained normalization weights for model')
     return parser
 
 def main():
@@ -111,16 +114,16 @@ def main():
         [1, 0, 0, 0]
     ], dtype=np.float32)
 
-
     env.addGate(positions, rotations)
 
     if args.train:
         if args.weight == "./saved/quadrotor_env.zip":
+            env = VecNormalize(env, norm_obs=True, norm_reward=True)
             model = PPO(
                 tensorboard_log=saver.data_dir,
                 policy="MlpPolicy",  # check activation function
                 policy_kwargs=dict(activation_fn=torch.nn.ReLU,
-                    net_arch=dict(pi=[64, 64], vf=[64, 64])),
+                    net_arch=dict(pi=[128, 128], vf=[128, 128])),
                 env=env,
                 gae_lambda=0.95,
                 gamma=0.99,  # lower 0.9 ~ 0.99
@@ -137,19 +140,27 @@ def main():
                 device="cpu"
             )
         else:
+            if not args.norm_weight:
+                env = VecNormalize(env, norm_obs=True, norm_reward=True)
+            else:
+                env = VecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
         # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
         model.learn(
-            total_timesteps=int(1e7),  # 2e7 then 1e7 if needed
+            total_timesteps=int(2e7),  # 2e7 then 1e7 if needed
             progress_bar=False,
             reset_num_timesteps=False,
             callback=CurriculumCallback()
         )
         model.save(saver.data_dir)
+        env.save(saver.data_dir + "/vec_normalize.pkl")
 
     # # Testing mode with a trained weight
     else:
-        model = PPO.load(args.weight, device="cpu")
+        env = VecNormalize.load(args.norm_weight, env)
+        env.training = False
+        # env.norm_reward = False
+        model = PPO.load(args.weight, env=env, device="cpu")
         test_model(env, model, render=args.render, weight_path=args.weight)
 
 
