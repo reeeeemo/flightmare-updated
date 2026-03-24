@@ -43,9 +43,9 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
             ep_len += 1
             #
             pos.append(obs[0, 0:3].tolist())
-            dpos.append(obs[0, 6:9].tolist())
-            euler.append(obs[0, 3:6].tolist())
-            deuler.append(obs[0, 9:12].tolist())
+            dpos.append(obs[0, 12:15].tolist())
+            euler.append(obs[0, 3:12].tolist())
+            deuler.append(obs[0, 15:18].tolist())
             #
             actions.append(act[0, :].tolist())
         pos = np.asarray(pos)
