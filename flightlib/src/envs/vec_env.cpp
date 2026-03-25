@@ -32,6 +32,7 @@ template<typename EnvBase>
 void VecEnv<EnvBase>::init(void) {
   //
   unity_render_ = cfg_["env"]["render"].as<bool>();
+  unity_camera_ = cfg_["env"]["camera"].as<bool>();
   seed_ = cfg_["env"]["seed"].as<int>();
   num_envs_ = cfg_["env"]["num_envs"].as<int>();
   scene_id_ = cfg_["env"]["scene_id"].as<SceneID>();
@@ -47,6 +48,9 @@ void VecEnv<EnvBase>::init(void) {
   }
 
   // set Unity
+  if (unity_camera_) {
+    addRGBCamera();
+  }
   setUnity(unity_render_);
 
   obs_dim_ = envs_[0]->getObsDim();
@@ -140,6 +144,17 @@ void VecEnv<EnvBase>::decreaseRotMult(const Scalar num) {
 template<typename EnvBase>
 void VecEnv<EnvBase>::getObs(Ref<MatrixRowMajor<>> obs) {
   for (int i = 0; i < num_envs_; i++) envs_[i]->getObs(obs.row(i));
+}
+
+template<typename EnvBase>
+void VecEnv<EnvBase>::getRGBImages(std::vector<cv::Mat>& imgs) {
+  imgs.resize(num_envs_);
+  for (int i = 0; i < num_envs_; i++) envs_[i]->getRGBImage(imgs[i]);
+}
+
+template<typename EnvBase>
+void VecEnv<EnvBase>::addRGBCamera() {
+  for (int i = 0; i < num_envs_; i++) envs_[i]->addRGBCamera();
 }
 
 

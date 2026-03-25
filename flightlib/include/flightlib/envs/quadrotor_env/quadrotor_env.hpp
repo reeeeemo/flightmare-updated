@@ -8,6 +8,8 @@
 // yaml cpp
 #include <yaml-cpp/yaml.h>
 
+#include <opencv2/core/core.hpp>
+
 // flightlib
 #include "flightlib/bridges/unity_bridge.hpp"
 #include "flightlib/common/command.hpp"
@@ -16,6 +18,7 @@
 #include "flightlib/common/types.hpp"
 #include "flightlib/envs/env_base.hpp"
 #include "flightlib/objects/quadrotor.hpp"
+#include "flightlib/sensors/rgb_camera.hpp"
 
 namespace flightlib {
 
@@ -55,11 +58,14 @@ class QuadrotorEnv final : public EnvBase {
   bool loadParam(const YAML::Node &cfg);
   void increaseRotMult(const Scalar num);
   void decreaseRotMult(const Scalar num);
+  void addRGBCamera();
 
   // - public get functions
   bool getObs(Ref<Vector<>> obs) override;
   bool getAct(Ref<Vector<>> act) const;
   bool getAct(Command *const cmd) const;
+  bool getRGBImage(cv::Mat& img);
+
 
   // - auxiliar functions
   bool isTerminalState(Scalar &reward) override;
@@ -75,9 +81,11 @@ class QuadrotorEnv final : public EnvBase {
   Command cmd_;
   Logger logger_{"QaudrotorEnv"};
 
+  // camera
+  std::shared_ptr<RGBCamera> rgb_camera_;
+
   // define multipliers for random axis tilts in environment
   Scalar rot_scale_, rot_mult_;
-
 
   // observations and actions (for RL)
   Vector<quadenv::kNObs> quad_obs_;

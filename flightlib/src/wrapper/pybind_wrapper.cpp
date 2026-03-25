@@ -3,12 +3,14 @@
 #include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <pybind11/numpy.h>
 
 // flightlib
 #include "flightlib/envs/env_base.hpp"
 #include "flightlib/envs/quadrotor_env/quadrotor_env.hpp"
 #include "flightlib/envs/test_env.hpp"
 #include "flightlib/envs/vec_env.hpp"
+#include <opencv2/core.hpp>
 
 namespace py = pybind11;
 using namespace flightlib;
@@ -34,6 +36,20 @@ PYBIND11_MODULE(flightgym, m) {
     .def("getObsDim", &VecEnv<QuadrotorEnv>::getObsDim)
     .def("getActDim", &VecEnv<QuadrotorEnv>::getActDim)
     .def("getExtraInfoNames", &VecEnv<QuadrotorEnv>::getExtraInfoNames)
+    .def("addRGBCamera", &VecEnv<QuadrotorEnv>::addRGBCamera)
+    .def("getRGBImage", [](VecEnv<QuadrotorEnv>& env) {
+      std::vector<cv::Mat> imgs;
+      env.getRGBImages(imgs);
+      py::list result;
+      for (auto& img : imgs) {
+        py::array_t<uint8_t> arr(
+          {img.rows, img.cols, img.channels()},
+          img.data
+        );
+        result.append(arr);
+      }
+      return result;
+    })
     .def("__repr__", [](const VecEnv<QuadrotorEnv>& a) {
       return "RPG Drone Racing Environment";
     });

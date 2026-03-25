@@ -42,6 +42,18 @@ QuadrotorEnv::QuadrotorEnv(const std::string &cfg_path)
 
 QuadrotorEnv::~QuadrotorEnv() {}
 
+void QuadrotorEnv::addRGBCamera() {
+  // setup cam
+  rgb_camera_ = std::make_shared<RGBCamera>();
+  Vector<3> B_r_BC(0.0, 0.0, 0.3);
+  Matrix<3, 3> R_BC = Quaternion(1.0, 0.0, 0.0, 0.0).toRotationMatrix();
+  rgb_camera_->setFOV(90);
+  rgb_camera_->setWidth(320);
+  rgb_camera_->setHeight(320);
+  rgb_camera_->setRelPose(B_r_BC, R_BC);
+  quadrotor_ptr_->addRGBCamera(rgb_camera_);
+}
+
 bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random) {
   quad_state_.setZero();
   quad_act_.setZero();
@@ -91,6 +103,10 @@ bool QuadrotorEnv::getObs(Ref<Vector<>> obs) {
 
   obs.segment<quadenv::kNObs>(quadenv::kObs) = quad_obs_;
   return true;
+}
+
+bool QuadrotorEnv::getRGBImage(cv::Mat& img) {
+  return rgb_camera_->getRGBImage(img);
 }
 
 Scalar QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs) {

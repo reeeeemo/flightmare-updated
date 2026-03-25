@@ -9,12 +9,15 @@
 // openmp
 #include <omp.h>
 
+#include <opencv2/core/core.hpp>
+
 // flightlib
 #include "flightlib/bridges/unity_bridge.hpp"
 #include "flightlib/common/logger.hpp"
 #include "flightlib/common/types.hpp"
 #include "flightlib/envs/env_base.hpp"
 #include "flightlib/envs/quadrotor_env/quadrotor_env.hpp"
+#include "flightlib/sensors/rgb_camera.hpp"
 
 namespace flightlib {
 
@@ -40,10 +43,12 @@ class VecEnv {
   void setSeed(const int seed);
   void increaseRotMult(const Scalar num);
   void decreaseRotMult(const Scalar num);
+  void addRGBCamera();
 
   // public get functions
   void getObs(Ref<MatrixRowMajor<>> obs);
   size_t getEpisodeLength(void);
+  void getRGBImages(std::vector<cv::Mat>& imgs);
 
   // - auxiliary functions
   void isTerminalState(Ref<BoolVector<>> terminal_state);
@@ -90,6 +95,7 @@ class VecEnv {
   SceneID scene_id_{UnityScene::WAREHOUSE};
   bool unity_ready_{false};
   bool unity_render_{false};
+  bool unity_camera_{false};
   RenderMessage_t unity_output_;
   uint16_t receive_id_{0};
   int gateCounter;

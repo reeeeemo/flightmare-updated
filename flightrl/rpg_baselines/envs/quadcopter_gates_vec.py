@@ -2,7 +2,7 @@ import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from collections import deque
-import random as rand
+import cv2
 
 class QuadcopterGatesVec(VecEnv):
     """Custom Gymnasium environment that simulates a drone flying through gates
@@ -17,9 +17,11 @@ class QuadcopterGatesVec(VecEnv):
         goal_xyz: goal XYZ position for drone to reach
         goal_rpy: goal RPY orientation for drone to reach
     """
-    def __init__(self, 
-                 impl, 
-                 max_memory_space: int = 200
+    def __init__(
+            self, 
+            impl, 
+            max_memory_space: int = 200,
+            use_cam: bool = False
          ):
         self.wrapper = impl
 
@@ -32,11 +34,11 @@ class QuadcopterGatesVec(VecEnv):
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
         # [x_to_near_gate, y_to_near_gate, z_to_near_gate]
-        # [yaw, pitch, roll] -> should be a rot mat instead of just yaw pitch roll
+        # 9D rot mat for [yaw, pitch, roll]
         # [x_vel, y_vel, z_vel]
         # [roll, pitch, yaw vel]
-        # [gate_corner_x, gate_corner_y, gate_corner_z] x 4
         # [previous_thrust, prev_pitch, prev_yaw, prev_roll]
+        # [gate_corner_x, gate_corner_y, gate_corner_z] x 4
         self._observation_space = spaces.Box(
             np.ones(self.num_full_obs) * -np.inf,
             np.ones(self.num_full_obs) * np.inf, dtype=np.float32)
@@ -70,6 +72,9 @@ class QuadcopterGatesVec(VecEnv):
         self.half_w = 0.5  # half width of gate
         self.half_h = 0.5  # half height of gate
         self.gate_depth = 1.0  # full depth of gate
+
+        # camera vars
+        self.use_cam = use_cam
 
         # goal gates
         self.gates = np.zeros((0, 3), dtype=np.float32)
@@ -177,12 +182,25 @@ class QuadcopterGatesVec(VecEnv):
         right = self.rot_mats[self.cur_gate, :, 0] * self.half_w
         up = self.rot_mats[self.cur_gate, :, 2] * self.half_h
 
-        self._full_obs[:, 22:34] = np.concatenate([
-            (center + right + up) - self.drone_pos, # top right
-            (center - right + up) - self.drone_pos, # top left
-            (center + right - up) - self.drone_pos, # bottom right
-            (center - right - up) - self.drone_pos  # bottom left
-        ], axis=1)
+
+        if not self.use_cam:  # use priviledged learning
+            self._full_obs[:, 22:34] = np.concatenate([
+                (center + right + up) - self.drone_pos, # top right
+                (center - right + up) - self.drone_pos, # top left
+                (center + right - up) - self.drone_pos, # bottom right
+                (center - right - up) - self.drone_pos  # bottom left
+            ], axis=1)
+        else:  # use onboard camera
+            imgs = np.zeros((self.num_envs, 320, 320, 3), dtype=np.float32)
+            imgs = self.wrapper.getRGBImage()
+            # TODO: get gate xyz pose from a model and push it to the full obs
+            self._full_obs[:, 22:34] = np.concatenate([
+                (center + right + up) - self.drone_pos, # top right
+                (center - right + up) - self.drone_pos, # top left
+                (center + right - up) - self.drone_pos, # bottom right
+                (center - right - up) - self.drone_pos  # bottom left
+            ], axis=1)
+
 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.

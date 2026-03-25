@@ -61,10 +61,14 @@ def parser():
                         help='trained weight path')
     parser.add_argument('-wn', '--norm_weight', type=str, default='',
                         help='trained normalization weights for model')
+    parser.add_argument('--camera', type=int, default=0,
+                        help="To add a camera onto each environment for detections")
     return parser
 
 def main():
     args = parser().parse_args()
+
+    # set yaml for quadcopter environments
     yaml = YAML()
     cfg = yaml.load(open(os.environ["FLIGHTMARE_PATH"] +
                          "/flightlib/configs/vec_env.yaml", 'r'))
@@ -76,13 +80,19 @@ def main():
         cfg["env"]["render"] = "yes"
     else:
         cfg["env"]["render"] = "no"
+    
+    if args.camera:
+        cfg["env"]["camera"] = "yes"
+    else:
+        cfg["env"]["camera"] = "no"
 
     stream = StringIO()
     yaml.dump(cfg, stream)
 
-    # flies throgh gates
+    # flies through gates
     env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
+        use_cam=args.camera
     )
 
     # set random seed
