@@ -4,6 +4,7 @@ from stable_baselines3.common.vec_env import VecEnv
 from collections import deque
 import random as rand
 
+
 class QuadcopterGatesVec(VecEnv):
     """Custom Gymnasium environment that simulates a drone flying through gates
 
@@ -276,6 +277,10 @@ class QuadcopterGatesVec(VecEnv):
     @property
     def extra_info_names(self):
         return self._extraInfoNames
+    
+    @property
+    def render_mode(self):
+        return None
 
     def start_recording_video(self, file_name):
         raise RuntimeError('This method is not implemented')

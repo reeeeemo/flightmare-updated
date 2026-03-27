@@ -3,6 +3,7 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from collections import deque
 
+
 class QuadcopterHoverVec(VecEnv):
     """Custom Gymnasium environment that simulates a drone hovering.
 
@@ -23,37 +24,47 @@ class QuadcopterHoverVec(VecEnv):
                  max_memory_space: int = 200
          ):
         self.wrapper = impl
-        self.num_obs = self.wrapper.getObsDim()
+        self.num_drone_obs = self.wrapper.getObsDim()
+        self.num_full_obs = self.num_drone_obs + 22
         self.num_acts = self.wrapper.getActDim()
         self.max_episode_steps = 300
-        print(f"[OBSERVATION STATE DIM]: {self.num_obs}")
+        print(f"[DRONE OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
-        # [x, y, z]
-        # [yaw, pitch, roll]
+        # [x, y, z] relative to gate
+        # 9D rot mat for [yaw, pitch, roll]
         # [x_vel, y_vel, z_vel]
         # [roll, pitch, yaw vel]
+        # [prev_thrust, prev_pitch, prev_yaw, prev_roll]
+        # UNUSED FOR HOVER TASK [gate_corn_x, gate_corn_y, gate_corn_z] x4
         self._observation_space = spaces.Box(
-            np.ones(self.num_obs) * -np.inf,
-            np.ones(self.num_obs) * np.inf, dtype=np.float32)
-        
+            np.ones(self.num_full_obs) * -np.inf,
+            np.ones(self.num_full_obs) * np.inf, dtype=np.float32)
+
         # [collective thrust, roll, pitch, yaw] rates
         self._action_space = spaces.Box(
             low=np.ones(self.num_acts) * -1.,
             high=np.ones(self.num_acts) * 1.,
             dtype=np.float32)
-        
+
         # numpy array of all drone obs, rews since multi environments
-        self._observation = np.zeros([self.num_envs, self.num_obs],
-                                     dtype=np.float32)
+        self._drone_obs = np.zeros([self.num_envs, self.num_drone_obs],
+                                   dtype=np.float32)
+        self._full_obs = np.zeros([self.num_envs, self.num_drone_obs],
+                                  dtype=np.float32)
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
         self._done = np.zeros((self.num_envs), dtype=np.bool_)
         self.rewards = [[] for _ in range(self.num_envs)]
-        
+
         # extra info for individual environments if needed
         self._extraInfoNames = self.wrapper.getExtraInfoNames()
-        self._extraInfo = np.zeros([self.num_envs,
-                                    len(self._extraInfoNames)], dtype=np.float32)
+        self._extraInfo = np.zeros(
+            [
+                self.num_envs,
+                len(self._extraInfoNames)
+            ],
+            dtype=np.float32
+        )
 
         # reward coefficients
         self.pos_coef = -0.006
@@ -71,22 +82,24 @@ class QuadcopterHoverVec(VecEnv):
         self.rot_mult = 0.2  # rotation multiplier. also in yaml.
         self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
 
+        self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
+
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
 
     def _compute_reward(self, action: np.ndarray):
         """Computes reward of drone in environment.
-        
+
         Args:
             action: [normalized_thrust, roll, pitch, yaw] rates
         Returns:
             reward based on drone observation state and current action
         """
 
-        pos_err = self._observation[:, 0:3]
-        ori_err = self._observation[:, 5:2:-1] - self.goal_rpy
-        vel_err = self._observation[:, 6:9]
-        ang_err = self._observation[:, 9:12]
+        pos_err = self._full_obs[:, 0:3]
+        ori_err = self._drone_obs[:, 5:2:-1] - self.goal_rpy
+        vel_err = self._full_obs[:, 12:15]
+        ang_err = self._full_obs[:, 15:18]
 
         # position, orientation, linear and angular velocity
         # and penalty for having to use an action
@@ -99,6 +112,22 @@ class QuadcopterHoverVec(VecEnv):
             0.05
         ).astype(np.float32)
 
+    def _update_observation(self):
+        """Updates observations recieved from C++ wrapper."""
+        self.drone_pos = self._drone_obs[:, 0:3].copy()
+        self._full_obs[:, 0:3] = self.goal_xyz - self.drone_pos
+
+        self._full_obs[:, 12:15] = self._drone_obs[:, 6:9].copy()
+        self._full_obs[:, 15:18] = self._drone_obs[:, 9:12].copy()
+
+        # update angles to 9d rotation mat
+        # see https://arxiv.org/pdf/2509.17274 section III and IV for details
+        self._full_obs[:, 3:12] = self.convert_euler_to_rot_mat(
+            self._drone_obs[:, 3:6].copy()
+        )
+
+        self._full_obs[:, 18:22] = self._prev_action
+
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
 
@@ -108,11 +137,12 @@ class QuadcopterHoverVec(VecEnv):
             observation, reward, done, env information
         """
         # values are clamped in c++ code
-        self.wrapper.step(action, self._observation,
+        self.wrapper.step(action, self._drone_obs,
                           self._reward, self._done, self._extraInfo)
 
-        self.drone_pos = self._observation[:, 0:3].copy()
-        self._observation[:, 0:3] = self.goal_xyz - self.drone_pos
+        self._update_observation()
+        self._prev_action = action.copy()
+
         # compute reward and if -1 dont adjust, but if 0 we update reward
         step_reward = self._compute_reward(action)
         self._reward = np.where(self._done, self._reward, step_reward)
@@ -136,8 +166,10 @@ class QuadcopterHoverVec(VecEnv):
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
+        
+        self._prev_action[self._done] = 0
 
-        return self._observation.copy(), self._reward.copy(), \
+        return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
 
     def stepUnity(self, action, send_id):
@@ -147,8 +179,10 @@ class QuadcopterHoverVec(VecEnv):
             action: [normalized thrust, roll, pitch, yaw] rates
             send_id: ID for unity enivonrment
         """
-        receive_id = self.wrapper.stepUnity(action, self._observation,
-                                            self._reward, self._done, self._extraInfo, send_id)
+        receive_id = self.wrapper.stepUnity(
+            action, self._drone_obs,
+            self._reward, self._done, self._extraInfo, send_id
+        )
 
         return receive_id
 
@@ -167,8 +201,10 @@ class QuadcopterHoverVec(VecEnv):
     def reset(self):
         """Resets drone environment."""
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
-        self.wrapper.reset(self._observation)
-        return self._observation.copy()
+        self._prev_action[:] = 0
+        self.wrapper.reset(self._drone_obs)
+        self._update_observation()
+        return self._full_obs.copy()
 
     def reset_and_update_info(self):
         return self.reset(), self._update_epi_info()
@@ -193,14 +229,6 @@ class QuadcopterHoverVec(VecEnv):
     def connectUnity(self):
         self.wrapper.connectUnity()
 
-    def addGate(self, positions: np.ndarray):
-        """Adds a static gate to the drone environment.
-        
-        Args:
-            positions: matrix of [X,Y,Z] coordinates for each gate.
-        """
-        self.wrapper.addGate(positions)
-
     def disconnectUnity(self):
         self.wrapper.disconnectUnity()
 
@@ -219,6 +247,10 @@ class QuadcopterHoverVec(VecEnv):
     @property
     def extra_info_names(self):
         return self._extraInfoNames
+
+    @property
+    def render_mode(self):
+        return None
 
     def start_recording_video(self, file_name):
         raise RuntimeError('This method is not implemented')
@@ -240,6 +272,20 @@ class QuadcopterHoverVec(VecEnv):
             self.wrapper.increaseRotMult(0.2)
             self.rot_mult = min(self.rot_mult + 0.2, 1.0)
             self.ep_successes.clear()
+
+    def convert_euler_to_rot_mat(self, euler: np.ndarray):
+        """Converts a batch of euler angles to a rotation matrix."""
+        # http://close-range.com/docs/Computing_Euler_angles_from_a_rotation_matrix.pdf (its reversed)
+        y, p, r = euler[:, 0], euler[:, 1], euler[:, 2]
+        cy, sy = np.cos(y), np.sin(y)
+        cp, sp = np.cos(p), np.sin(p)
+        cr, sr = np.cos(r), np.sin(r)
+
+        c0 = np.stack([cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr], axis=1)
+        c1 = np.stack([sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr], axis=1)
+        c2 = np.stack([-sp, cp*sr, cp*cr], axis=1)
+
+        return np.concatenate([c0, c1, c2], axis=1)
 
     def step_async(self, actions):
         self._async_actions = actions
@@ -263,7 +309,7 @@ class QuadcopterHoverVec(VecEnv):
 
     def set_attr(self, attr_name, value, indices=None):
         """Set attribute inside vectorized environments.
-        
+
         Args:
             attr_name: (str) The name of attribute to assign new value
             value: (obj) Value to assign to `attr_name`

@@ -31,6 +31,7 @@ from flightgym import QuadrotorEnv_v1
 #   --train 0
 #   --weight ./saved/quadrotor_env.zip
 
+# controls how far the drone can tilt (0-~360)
 class CurriculumCallback(BaseCallback):
     def _on_rollout_start(self) -> None:
         self.training_env.curriculum_callback()
@@ -76,7 +77,7 @@ def main():
     stream = StringIO()
     yaml.dump(cfg, stream)
 
-    # hovers
+    # hover at z=0 while staying stable at 0,0,0
     env = QuadcopterHoverVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         GOAL_XYZ=np.array([0.0, 0.0, 5.0]),
@@ -98,7 +99,7 @@ def main():
                 tensorboard_log=saver.data_dir,
                 policy="MlpPolicy",  # check activation function
                 policy_kwargs=dict(activation_fn=torch.nn.ReLU,
-                    net_arch=dict(pi=[64, 64], vf=[64, 64])),
+                    net_arch=dict(pi=[128, 128], vf=[128, 128])),
                 env=env,
                 gae_lambda=0.95,
                 gamma=0.99,  # lower 0.9 ~ 0.99

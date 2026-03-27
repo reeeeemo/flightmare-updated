@@ -32,6 +32,7 @@ from flightgym import QuadrotorEnv_v1
 #   --train 0
 #   --weight ./saved/quadrotor_env.zip
 
+# unimplemented at the moment so will always show false until random gates are added.
 class CurriculumCallback(BaseCallback):
     def _on_rollout_start(self) -> None:
         self.training_env.curriculum_callback()
@@ -58,8 +59,6 @@ def parser():
                         help="Random seed")
     parser.add_argument('-w', '--weight', type=str, default='./saved/quadrotor_env.zip',
                         help='trained weight path')
-    parser.add_argument("--random", type=int, default=0,
-                        help="Random gate initialization")
     return parser
 
 def main():
@@ -94,46 +93,25 @@ def main():
         saver = U.ConfigurationSaver(log_dir=log_dir)
 
     # add gates to environment
-    # TODO: rework randomly placed gates
-    if not args.random:
-        """
-        positions = np.array([
-            [0, 7.5, 5],
-            [4, 10, 10],
-            [8, 13, 15],
-            [12, 10, 10],
-            [16, 7.5, 5],
-            [20, 5, 0]
-        ], dtype=np.float32)
-        rotations = np.array([  # w, x, y, z
-            [-np.cos(np.pi/8), 0, 0, np.sin(np.pi/8)],
-            [np.cos(np.pi/4), np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [-np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), -np.sin(1*(np.pi/2)), np.sin(1*(np.pi/4)), 0.0]
-        ], dtype=np.float32)"""
-        positions = np.array([
-            [0, 7.5, 5],
-            [0, 11.5, 5]
-        ], dtype=np.float32)
-        rotations = np.array([
-            [np.cos(np.pi/2), 0, np.sin(np.pi/2), 0.0],
-            [np.cos(np.pi/2), 0, np.sin(np.pi/2), 0.0]
-        ], dtype=np.float32)
-    else:
-        positions = np.array([
-            [0.0, rand.uniform(0.0, 5.0), rand.uniform(0.0, 5.0)],
-            [rand.uniform(-2.0, 2.0), rand.uniform(5.0, 10.0), rand.uniform(5.0, 10.0)],
-            [rand.uniform(-2.0, 2.0), rand.uniform(7.0, 15.0), rand.uniform(10.0, 15.0)],
-            [rand.uniform(-4.0, 4.0), rand.uniform(8.0, 16.0), rand.uniform(17.0, 25.0)]
-        ], dtype=np.float32)
-        rotations = np.array([
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0],
-            [np.cos(np.pi/4), 0.0, np.sin(1*(np.pi/4)), 0.0]
-        ], dtype=np.float32)    
+    positions = np.array([
+        [0, 7.5, 7],
+        [0, 13.5, 10],
+        [3, 19.5, 12],
+        [9, 21.5, 12],
+        [15, 19.5, 12],
+        [18, 13.5, 10],
+        [18, 7.5, 7]
+    ], dtype=np.float32)
+    
+    rotations = np.array([
+        [1, 0, 0, 0],
+        [np.cos(np.pi/8), np.sin(np.pi/8), 0, 0], # tilted up
+        [-np.cos(np.pi/12), 0, 0, np.sin(np.pi/12)], # tiled right
+        [-np.cos(np.pi/4), 0, 0, np.sin(np.pi/4)], # right
+        [np.cos(np.pi/3), 0, 0, -np.sin(np.pi/3)], # tiled left
+        [np.cos(np.pi/12), np.sin(np.pi/12), 0, 0],
+        [1, 0, 0, 0]
+    ], dtype=np.float32)
 
     env.addGate(positions, rotations)
 
@@ -143,11 +121,10 @@ def main():
                 tensorboard_log=saver.data_dir,
                 policy="MlpPolicy",  # check activation function
                 policy_kwargs=dict(activation_fn=torch.nn.ReLU,
-                    net_arch=dict(pi=[64, 64], vf=[64, 64])),
+                    net_arch=dict(pi=[128, 128], vf=[128, 128])),
                 env=env,
                 gae_lambda=0.95,
                 gamma=0.99,  # lower 0.9 ~ 0.99
-                # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
                 n_steps=2048,
                 ent_coef=0.005,
                 learning_rate=3e-4,
@@ -161,7 +138,7 @@ def main():
             )
         else:
             model = PPO.load(args.weight, env=env, device="cpu")
-        # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
+
         model.learn(
             total_timesteps=int(2e7),  # 1.3e7
             progress_bar=False,
