@@ -171,7 +171,7 @@ def main():
         env.training = False
         # env.norm_reward = False
         model = PPO.load(args.weight, env=env, device="cpu")
-        test_model(env, model, render=args.render, weight_path=args.weight)
+        test_model(env, model, render=args.render, weight_path=args.weight, vid=args.camera)
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ class QuadcopterGatesVec(VecEnv):
         self.randomize_gates = False
 
         self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
-
+        self._last_imgs = np.zeros((self.num_envs, 320, 320, 3), dtype=np.float32)
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -191,8 +191,7 @@ class QuadcopterGatesVec(VecEnv):
                 (center - right - up) - self.drone_pos  # bottom left
             ], axis=1)
         else:  # use onboard camera
-            imgs = np.zeros((self.num_envs, 320, 320, 3), dtype=np.float32)
-            imgs = self.wrapper.getRGBImage()
+            self._last_imgs = self.wrapper.getRGBImage()
             # TODO: get gate xyz pose from a model and push it to the full obs
             self._full_obs[:, 22:34] = np.concatenate([
                 (center + right + up) - self.drone_pos, # top right
@@ -336,6 +335,10 @@ class QuadcopterGatesVec(VecEnv):
     @property
     def render_mode(self):
         return None
+    
+    @property
+    def rgb_image(self):
+        return self._last_imgs
 
     @property
     def extra_info_names(self):
