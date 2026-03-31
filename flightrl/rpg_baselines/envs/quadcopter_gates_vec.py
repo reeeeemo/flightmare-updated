@@ -62,16 +62,19 @@ class QuadcopterGatesVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.pos_coef = -0.002
-        self.lin_vel_coef = 0.04
-        self.ang_vel_coef = -0.0001
-        self.act_coef = -0.0002
+        self.pos_coef = 0 # -0.1 #-0.002
+        self.lin_vel_coef = 10 #0.04
+        self.ang_vel_coef = -0.025 #-0.0001
+        self.act_coef = 0 # -0.05 #-0.0002
         self.offset_coef = 2
+        self.perception_coef = 2.0 #0.05
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
         self.half_w = 0.5  # half width of gate
         self.half_h = 0.5  # half height of gate
         self.gate_depth = 1.0  # full depth of gate
+        self.v_max = 99
+        self.sim_dt = 0.02
 
         # camera vars
         self.use_cam = use_cam
@@ -88,6 +91,7 @@ class QuadcopterGatesVec(VecEnv):
 
         self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
         self._last_imgs = np.zeros((self.num_envs, 320, 320, 3), dtype=np.float32)
+        self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -108,16 +112,29 @@ class QuadcopterGatesVec(VecEnv):
 
         # compute normalized gate direction then velocity twrds gate and gate normal
         gate_dist = np.linalg.norm(gate_dir, axis=1, keepdims=True).clip(min=1e-6)
-        vel_towards_gate = np.sum(vel * (gate_dir / gate_dist), axis=1)
+        gate_dir_norm = gate_dir / gate_dist
+        vel_towards_gate = np.sum(vel * gate_dir_norm, axis=1)
 
+        # compute cosine of norm gate dir and forward-facing camera vec
+        # only penalize if above 60 degrees
+        forward_axis = self._full_obs[:, 3:12].reshape(self.num_envs, 3, 3)[:, :, 1]
+        camera_dev = np.sum(gate_dir_norm * forward_axis, axis=1)
+        camera_penalty = np.maximum(0.0, 0.5 - camera_dev)
+
+        # how far did we move from starting value to new val (speed + position)
+        prev_dist = np.linalg.norm(self._prev_gate_dir, axis=1)
+        progress = np.clip(prev_dist - gate_dist.squeeze(), -self.v_max * self.sim_dt, self.v_max * self.sim_dt)
+        # self.lin_vel_coef * vel_towards_gate +  # velocity towards gate
         step_rew = (
-            self.pos_coef * gate_dist.squeeze() +  # small positional penalty for being further away from gate
-            self.lin_vel_coef * vel_towards_gate +  # velocity towards gate
+            # self.pos_coef * gate_dist.squeeze() +  # small positional penalty for being further away from gate
+            self.lin_vel_coef * progress +
             self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +  # small penalty towards unstable angular vel
-            self.act_coef * np.linalg.norm(action, axis=1) # small penalty for using an action
+            self.act_coef * np.linalg.norm(action, axis=1) - # small penalty for using an action
+            self.perception_coef * camera_penalty # penalty for not being in the orientation of the gate
         ).astype(np.float32)
 
         self._reward = np.where(self._done, self._reward, step_rew)
+        self._prev_gate_dir = gate_dir.copy()
 
         # update current gate selection + give reward if position is close
         for i in range(self.num_envs):
@@ -137,9 +154,11 @@ class QuadcopterGatesVec(VecEnv):
                 self._reward[i] = -1
                 self._done[i] = True
             elif on_plane and in_opening:
-                self._reward[i] += 1.0
-                self._reward[i] += 1.0 - self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
+                self._reward[i] += 50
+                self._reward[i] += 3.0 - self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
                 self.cur_gate[i] += 1
+                if self.cur_gate[i] < len(self.gates):
+                    self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
             
             if self.cur_gate[i] >= len(self.gates):
                 self._done[i] = True
@@ -149,11 +168,11 @@ class QuadcopterGatesVec(VecEnv):
 
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
-                self._reward[i] += 10.0 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
+                self._reward[i] += 200 + 400.0 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
             # if done and drone did not go thru all gates, give penalty
             elif self._done[i] and self.cur_gate[i] < len(self.gates):
-                speed_penalty = -(1 + np.linalg.norm(self._full_obs[i, 12:15]))
-                base_penalty = -10
+                speed_penalty = -(10 * (len(self.gates) - self.cur_gate[i]))
+                base_penalty = -50
                 if self._reward[i] != -1:  # if not crashed, just speed penalty
                     self._reward[i] += speed_penalty
                 else:
@@ -181,7 +200,6 @@ class QuadcopterGatesVec(VecEnv):
         center = self.gates[self.cur_gate]
         right = self.rot_mats[self.cur_gate, :, 0] * self.half_w
         up = self.rot_mats[self.cur_gate, :, 2] * self.half_h
-
 
         if not self.use_cam:  # use priviledged learning
             self._full_obs[:, 22:34] = np.concatenate([
@@ -279,6 +297,7 @@ class QuadcopterGatesVec(VecEnv):
 
         self.wrapper.reset(self._drone_obs)
         self._update_observation()
+        self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
         return self._full_obs.copy()
 
     def reset_and_update_info(self):

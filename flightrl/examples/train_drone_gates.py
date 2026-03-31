@@ -63,6 +63,8 @@ def parser():
                         help='trained normalization weights for model')
     parser.add_argument('--camera', type=int, default=0,
                         help="To add a camera onto each environment for detections")
+    parser.add_argument('--wv', '--vision_weights', type=str, default='',
+                        help="vision weights for camera inference")
     return parser
 
 def main():
@@ -125,6 +127,7 @@ def main():
     ], dtype=np.float32)
 
     env.addGate(positions, rotations)
+    reset_timesteps = False
 
     if args.train:
         if args.weight == "./saved/quadrotor_env.zip":
@@ -150,16 +153,17 @@ def main():
                 device="cpu"
             )
         else:
+            reset_timesteps = "hover" in args.weight  # only reset if we are using hover weights
             if not args.norm_weight:
                 env = VecNormalize(env, norm_obs=True, norm_reward=True)
             else:
                 env = VecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
-        # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
+
         model.learn(
-            total_timesteps=int(2e7),  # 2e7 then 1e7 if needed
+            total_timesteps=int(4e7),
             progress_bar=False,
-            reset_num_timesteps=False,
+            reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
         )
         model.save(saver.data_dir)
@@ -169,9 +173,8 @@ def main():
     else:
         env = VecNormalize.load(args.norm_weight, env)
         env.training = False
-        # env.norm_reward = False
         model = PPO.load(args.weight, env=env, device="cpu")
-        test_model(env, model, render=args.render, weight_path=args.weight, vid=args.camera)
+        test_model(env, model, render=args.render, weight_path=args.weight, vid=args.camera, vision_weights=args.wv)
 
 
 if __name__ == "__main__":

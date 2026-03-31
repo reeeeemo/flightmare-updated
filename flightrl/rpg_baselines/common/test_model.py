@@ -1,9 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.gridspec as gridspec
+import cv2
+from ultralytics import YOLO
+import torch
 
-
-def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str = ""):
+def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str = "", vid=False, vision_weights: str = ""):
     #
     fig = plt.figure(figsize=(18, 12), tight_layout=True)
     gs = gridspec.GridSpec(5, 12)
@@ -32,22 +34,39 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
     max_ep_length = env.max_episode_steps
     if render:
         env.connectUnity()
+    if vision_weights != "":
+        vis_model = YOLO(vision_weights)
     for n_roll in range(num_rollouts):
         pos, euler, dpos, deuler = [], [], [], []
         actions = []
         obs, done, ep_len = env.reset(), False, 0
+
+        if vid:
+            fourcc = cv2.VideoWriter_fourcc(*"XVID")
+            out = cv2.VideoWriter(
+                weight_path.replace(".zip", f"_rollout_{n_roll}.avi"),
+                fourcc, 30.0, (320, 320)
+            )
+
         while not (done or (ep_len >= max_ep_length)):
             act, _ = model.predict(obs, deterministic=True)
             obs, rew, done, infos = env.step(act)
-            #
             ep_len += 1
-            #
+            
+            if vid:
+                frame = np.array(env.venv.rgb_image[0], dtype=np.uint8)
+                if vision_weights:
+                    out.write(vis_model(frame, device=("cuda" if torch.cuda.is_available() else "cpu"))[0].plot())
+                else:
+                    out.write(frame)
+
             pos.append(obs[0, 0:3].tolist())
             dpos.append(obs[0, 12:15].tolist())
             euler.append(obs[0, 3:12].tolist())
             deuler.append(obs[0, 15:18].tolist())
-            #
             actions.append(act[0, :].tolist())
+        if vid:
+            out.release()
         pos = np.asarray(pos)
         dpos = np.asarray(dpos)
         euler = np.asarray(euler)
