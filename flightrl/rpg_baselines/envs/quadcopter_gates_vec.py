@@ -62,12 +62,11 @@ class QuadcopterGatesVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.pos_coef = 0 # -0.1 #-0.002
-        self.lin_vel_coef = 10 #0.04
-        self.ang_vel_coef = -0.025 #-0.0001
-        self.act_coef = 0 # -0.05 #-0.0002
+        self.lin_vel_coef = 2 
+        self.ang_vel_coef = -0.001 
+        self.act_coef = -0.1 
         self.offset_coef = 2
-        self.perception_coef = 2.0 #0.05
+        self.perception_coef = -0.1 
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
         self.half_w = 0.5  # half width of gate
@@ -107,29 +106,31 @@ class QuadcopterGatesVec(VecEnv):
         
         # compute action-based rewards
         gate_dir = self._full_obs[:, 0:3]
-        vel = self._full_obs[:, 12:15]
         ang_vel = self._full_obs[:, 15:18]
 
         # compute normalized gate direction then velocity twrds gate and gate normal
         gate_dist = np.linalg.norm(gate_dir, axis=1, keepdims=True).clip(min=1e-6)
         gate_dir_norm = gate_dir / gate_dist
-        vel_towards_gate = np.sum(vel * gate_dir_norm, axis=1)
 
         # compute cosine of norm gate dir and forward-facing camera vec
         # only penalize if above 60 degrees
         forward_axis = self._full_obs[:, 3:12].reshape(self.num_envs, 3, 3)[:, :, 1]
-        camera_dev = np.sum(gate_dir_norm * forward_axis, axis=1)
+        up_axis = self._full_obs[:, 3:12].reshape(self.num_envs, 3, 3)[:, :, 2]
+        cam_forward = forward_axis * np.cos(np.pi/4) + up_axis * np.sin(np.pi/4)
+        camera_dev = np.sum(gate_dir_norm * cam_forward, axis=1)
         camera_penalty = np.maximum(0.0, 0.5 - camera_dev)
 
         # how far did we move from starting value to new val (speed + position)
         prev_dist = np.linalg.norm(self._prev_gate_dir, axis=1)
         progress = np.clip(prev_dist - gate_dist.squeeze(), -self.v_max * self.sim_dt, self.v_max * self.sim_dt)
-        # self.lin_vel_coef * vel_towards_gate +  # velocity towards gate
+
+        # prevent instantaneous switching of motors to high/low rpms ("bang bang" motion)
+        excess_change = np.maximum(0.0, np.abs(self._prev_action - action) - 0.3)
+
         step_rew = (
-            # self.pos_coef * gate_dist.squeeze() +  # small positional penalty for being further away from gate
             self.lin_vel_coef * progress +
             self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +  # small penalty towards unstable angular vel
-            self.act_coef * np.linalg.norm(action, axis=1) - # small penalty for using an action
+            self.act_coef * np.sum(excess_change, axis=1) +
             self.perception_coef * camera_penalty # penalty for not being in the orientation of the gate
         ).astype(np.float32)
 
@@ -154,8 +155,8 @@ class QuadcopterGatesVec(VecEnv):
                 self._reward[i] = -1
                 self._done[i] = True
             elif on_plane and in_opening:
-                self._reward[i] += 50
-                self._reward[i] += 3.0 - self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
+                self._reward[i] += 30
+                self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
                 self.cur_gate[i] += 1
                 if self.cur_gate[i] < len(self.gates):
                     self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
@@ -168,15 +169,10 @@ class QuadcopterGatesVec(VecEnv):
 
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
-                self._reward[i] += 200 + 400.0 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
+                self._reward[i] += 50 + 25 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
             # if done and drone did not go thru all gates, give penalty
             elif self._done[i] and self.cur_gate[i] < len(self.gates):
-                speed_penalty = -(10 * (len(self.gates) - self.cur_gate[i]))
-                base_penalty = -50
-                if self._reward[i] != -1:  # if not crashed, just speed penalty
-                    self._reward[i] += speed_penalty
-                else:
-                    self._reward[i] += base_penalty
+                self._reward[i] = -50
     
 
     def _update_observation(self):

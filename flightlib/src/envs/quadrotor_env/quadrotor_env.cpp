@@ -46,7 +46,9 @@ void QuadrotorEnv::addRGBCamera() {
   // setup cam
   rgb_camera_ = std::make_shared<RGBCamera>();
   Vector<3> B_r_BC(0.0, 0.0, 0.3);
-  Matrix<3, 3> R_BC = Quaternion(1.0, 0.0, 0.0, 0.0).toRotationMatrix();
+  // Matrix<3, 3> R_BC = Quaternion(1.0, 0.0, 0.0, 0.0).toRotationMatrix();
+  // 45 degree upwards tilt to the camera 
+  Matrix<3, 3> R_BC = Quaternion(cos(M_PI/8), sin(M_PI/8), 0.0, 0.0).toRotationMatrix();
   rgb_camera_->setFOV(90);
   rgb_camera_->setWidth(320);
   rgb_camera_->setHeight(320);

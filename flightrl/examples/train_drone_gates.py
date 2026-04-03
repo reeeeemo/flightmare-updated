@@ -142,7 +142,7 @@ def main():
                 gamma=0.99,  # lower 0.9 ~ 0.99
                 # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
                 n_steps=2048,
-                ent_coef=0.005,
+                ent_coef=0.005, # 0.005
                 learning_rate=3e-4,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
@@ -161,7 +161,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(4e7),
+            total_timesteps=int(2e7),
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
