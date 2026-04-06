@@ -56,16 +56,21 @@ void QuadrotorEnv::addRGBCamera() {
   quadrotor_ptr_->addRGBCamera(rgb_camera_);
 }
 
+void QuadrotorEnv::modifyResetPositions(Ref<Vector<>> pos) {
+  x_dist = std::uniform_real_distribution<Scalar>(pos[0], pos[1]);
+  y_dist = std::uniform_real_distribution<Scalar>(pos[2], pos[3]);
+  z_dist = std::uniform_real_distribution<Scalar>(pos[4], pos[5]);
+}
+
 bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random) {
   quad_state_.setZero();
   quad_act_.setZero();
 
   if (random) {
     // randomly reset the quadrotor state
-    // reset position
-    quad_state_.x(QS::POSX) = uniform_dist_(random_gen_);
-    quad_state_.x(QS::POSY) = uniform_dist_(random_gen_);
-    quad_state_.x(QS::POSZ) = uniform_dist_(random_gen_) + 5;
+    quad_state_.x(QS::POSX) = x_dist(random_gen_); //uniform_dist_(random_gen_);
+    quad_state_.x(QS::POSY) = y_dist(random_gen_); //uniform_dist_(random_gen_);
+    quad_state_.x(QS::POSZ) = z_dist(random_gen_); //uniform_dist_(random_gen_) + 5;
     if (quad_state_.x(QS::POSZ) < -0.0)
       quad_state_.x(QS::POSZ) = -quad_state_.x(QS::POSZ);
     // reset linear velocity

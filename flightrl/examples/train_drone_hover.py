@@ -123,7 +123,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
         # https://flightmare.readthedocs.io/en/latest/python_references/flight_env_vec.html#FlightEnvVec
         model.learn(
-            total_timesteps=int(1.3e7),  # 2e7
+            total_timesteps=int(1.3e7),  # 1.3e7
             progress_bar=False,
             reset_num_timesteps=False,
             callback=CurriculumCallback()

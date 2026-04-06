@@ -94,7 +94,8 @@ def main():
     # flies through gates
     env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
-        use_cam=args.camera
+        use_cam=args.camera,
+        training=False #(not args.render)
     )
 
     # set random seed
@@ -127,6 +128,8 @@ def main():
     ], dtype=np.float32)
 
     env.addGate(positions, rotations)
+    if not args.render:
+        env.modifyResetPosition(np.array([-5, 20, -5, 23, 5, 14], dtype=np.float32))
     reset_timesteps = False
 
     if args.train:

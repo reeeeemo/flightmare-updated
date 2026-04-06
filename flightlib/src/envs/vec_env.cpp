@@ -157,6 +157,11 @@ void VecEnv<EnvBase>::addRGBCamera() {
   for (int i = 0; i < num_envs_; i++) envs_[i]->addRGBCamera();
 }
 
+template<typename EnvBase>
+void VecEnv<EnvBase>::modifyResetPositions(Ref<Vector<>> pos) {
+  for (int i = 0; i < num_envs_; i++) envs_[i]->modifyResetPositions(pos);
+}
+
 
 template<typename EnvBase>
 size_t VecEnv<EnvBase>::getEpisodeLength(void) {

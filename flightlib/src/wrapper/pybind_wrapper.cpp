@@ -37,6 +37,7 @@ PYBIND11_MODULE(flightgym, m) {
     .def("getActDim", &VecEnv<QuadrotorEnv>::getActDim)
     .def("getExtraInfoNames", &VecEnv<QuadrotorEnv>::getExtraInfoNames)
     .def("addRGBCamera", &VecEnv<QuadrotorEnv>::addRGBCamera)
+    .def("modifyResetPositions", &VecEnv<QuadrotorEnv>::modifyResetPositions)
     .def("getRGBImage", [](VecEnv<QuadrotorEnv>& env) {
       std::vector<cv::Mat> imgs;
       env.getRGBImages(imgs);

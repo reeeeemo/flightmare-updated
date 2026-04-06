@@ -1,6 +1,6 @@
 quadrotor_env:
    camera: no
-   sim_dt: 0.02 
+   sim_dt: 0.00833333333 # 0.02
    max_t: 10.0
    add_camera: yes
    rotation_scale: 1.0

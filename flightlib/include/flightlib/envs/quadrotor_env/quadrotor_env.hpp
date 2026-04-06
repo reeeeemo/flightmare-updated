@@ -59,6 +59,7 @@ class QuadrotorEnv final : public EnvBase {
   void increaseRotMult(const Scalar num);
   void decreaseRotMult(const Scalar num);
   void addRGBCamera();
+  void modifyResetPositions(Ref<Vector<>> pos);
 
   // - public get functions
   bool getObs(Ref<Vector<>> obs) override;
@@ -86,6 +87,11 @@ class QuadrotorEnv final : public EnvBase {
 
   // define multipliers for random axis tilts in environment
   Scalar rot_scale_, rot_mult_;
+
+  // randomizers for position
+  std::uniform_real_distribution<Scalar> x_dist{-1.0, 1.0};
+  std::uniform_real_distribution<Scalar> y_dist{-1.0, 1.0};
+  std::uniform_real_distribution<Scalar> z_dist{-1.0, 1.0};
 
   // observations and actions (for RL)
   Vector<quadenv::kNObs> quad_obs_;
