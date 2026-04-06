@@ -65,7 +65,7 @@ class QuadcopterGatesVec(VecEnv):
         # reward coefficients
         self.lin_vel_coef = 5
         self.ang_vel_coef = -0.002
-        self.act_coef = -0.01 # -0.25
+        self.act_coef = -0.25 # -0.01
         self.offset_coef = 2
         self.perception_coef = 0 #-0.25 
 
@@ -141,6 +141,8 @@ class QuadcopterGatesVec(VecEnv):
 
         # update current gate selection + give reward if position is close
         for i in range(self.num_envs):
+            if self.cur_gate[i] >= len(self.gates):
+                continue
             # get coordinates in gate local space:
             # idx 0 = left/right offset from gate center
             # idx 1 = distance along the approach axis (forward/backward)
