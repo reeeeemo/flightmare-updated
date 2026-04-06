@@ -65,7 +65,7 @@ class QuadcopterGatesVec(VecEnv):
         # reward coefficients
         self.lin_vel_coef = 5
         self.ang_vel_coef = -0.002
-        self.act_coef = -0.25
+        self.act_coef = -0.01 # -0.25
         self.offset_coef = 2
         self.perception_coef = 0 #-0.25 
 
@@ -181,7 +181,8 @@ class QuadcopterGatesVec(VecEnv):
         """Updates observations recieved from C++ wrapper."""
         # update to relative pos between gate and drone
         self.drone_pos = self._drone_obs[:, 0:3].copy()
-        self._full_obs[:, 0:3] = self.gates[self.cur_gate] - self.drone_pos
+        cur_gate_idx = self.cur_gate.clip(max=len(self.gates)-1)
+        self._full_obs[:, 0:3] = self.gates[cur_gate_idx] - self.drone_pos
 
         # move other observations
         self._full_obs[:, 12:15] = self._drone_obs[:, 6:9].copy()
@@ -195,9 +196,9 @@ class QuadcopterGatesVec(VecEnv):
         self._full_obs[:, 18:22] = self._prev_action
 
         # get current gates (x,y,z) for all 4 corners
-        center = self.gates[self.cur_gate]
-        right = self.rot_mats[self.cur_gate, :, 0] * self.half_w
-        up = self.rot_mats[self.cur_gate, :, 2] * self.half_h
+        center = self.gates[cur_gate_idx]
+        right = self.rot_mats[cur_gate_idx, :, 0] * self.half_w
+        up = self.rot_mats[cur_gate_idx, :, 2] * self.half_h
 
         if not self.use_cam:  # use priviledged learning
             self._full_obs[:, 22:34] = np.concatenate([
@@ -253,7 +254,6 @@ class QuadcopterGatesVec(VecEnv):
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
-                self.cur_gate[i] = 0
 
         self._prev_action[self._done] = 0
 

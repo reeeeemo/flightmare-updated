@@ -128,8 +128,8 @@ def main():
     ], dtype=np.float32)
 
     env.addGate(positions, rotations)
-    if not args.render:
-        env.modifyResetPosition(np.array([-5, 20, -5, 23, 5, 14], dtype=np.float32))
+    #if not args.render:
+    #    env.modifyResetPosition(np.array([-5, 20, -5, 23, 5, 14], dtype=np.float32))
     reset_timesteps = False
 
     if args.train:
