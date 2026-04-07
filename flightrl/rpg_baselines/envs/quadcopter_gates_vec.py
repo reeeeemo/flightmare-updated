@@ -63,11 +63,11 @@ class QuadcopterGatesVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.lin_vel_coef = 5
+        self.lin_vel_coef = 2
         self.ang_vel_coef = -0.002
         self.act_coef = -0.25 # -0.01
         self.offset_coef = 2
-        self.perception_coef = 0 #-0.25 
+        self.perception_coef = -0.25 #-0.25 
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
         self.half_w = 0.5  # half width of gate
@@ -159,7 +159,7 @@ class QuadcopterGatesVec(VecEnv):
                 self._reward[i] = -1
                 self._done[i] = True
             elif on_plane and in_opening:
-                self._reward[i] += 30
+                self._reward[i] += 30  # old 30
                 self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
                 self.cur_gate[i] += 1
                 if self.cur_gate[i] < len(self.gates):
@@ -173,7 +173,7 @@ class QuadcopterGatesVec(VecEnv):
 
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
-                self._reward[i] += 50 + 25 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)
+                self._reward[i] += 50 + 25 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)  # old was 50
             # if done and drone did not go thru all gates, give penalty
             elif self._done[i] and self.cur_gate[i] < len(self.gates):
                 self._reward[i] = -50

@@ -43,6 +43,7 @@ ENV FLIGHTMARE_PATH=/home/flightmare
 RUN pip3 install torch torchvision
 
 # install any other dependencies required
+RUN pip3 install --ignore-installed psutil
 RUN cd /home/flightmare/flightlib && pip3 install . \
     && cd /home/flightmare/flightrl && pip3 install .
 
