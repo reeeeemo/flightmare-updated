@@ -2,7 +2,7 @@
   "name": "Flightmare",
   "image": "flightmare",
   "workspaceFolder": "/workspace",
-  "forwardPorts": [10253, 10254],
+  "forwardPorts": [10253, 10254, 6006],
   "runArgs": [
     "--gpus=all",
     "--ipc=host",
