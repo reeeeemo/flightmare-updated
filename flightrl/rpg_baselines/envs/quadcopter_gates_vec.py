@@ -156,7 +156,6 @@ class QuadcopterGatesVec(VecEnv):
                 and abs(local_positions[2]) < self.half_h
             )
             if on_plane and not in_opening:
-                self._reward[i] = -1
                 self._done[i] = True
             elif on_plane and in_opening:
                 self._reward[i] += 30  # old 30
