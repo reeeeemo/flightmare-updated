@@ -63,16 +63,16 @@ class QuadcopterGatesVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.lin_vel_coef = 4
+        self.lin_vel_coef = 2
         self.ang_vel_coef = -0.002
         self.act_coef = -0.10
         self.offset_coef = 2
-        self.perception_coef = -0.01
+        self.perception_coef = -0.1
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
-        self.half_w = 2.0  # half width of gate (real is 0.5)
-        self.half_h = 2.0  # half height of gate (real is 0.5)
-        self.gate_depth = 1.0  # full depth of gate
+        self.half_w = 1.5  # half width of gate (real is 0.5)
+        self.half_h = 1.5  # half height of gate (real is 0.5)
+        self.gate_depth = 0.5  # depth of gate
         self.v_max = 99
         self.sim_dt = 0.00833333333
 
@@ -156,7 +156,8 @@ class QuadcopterGatesVec(VecEnv):
                 and abs(local_positions[2]) < self.half_h
             )
             if on_plane and not in_opening:
-                self._done[i] = True
+                self._reward[i] -= 2
+                #self._done[i] = True
             elif on_plane and in_opening:
                 self._reward[i] += 30  # old 30
                 self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
