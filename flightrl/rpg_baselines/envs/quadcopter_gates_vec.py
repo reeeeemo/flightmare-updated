@@ -64,14 +64,14 @@ class QuadcopterGatesVec(VecEnv):
 
         # reward coefficients
         self.lin_vel_coef = 2
-        self.ang_vel_coef = -0.05  # instead of -0.002
+        self.ang_vel_coef = -0.005  # instead of -0.002
         self.act_coef = -0.10
         self.offset_coef = 2
         self.perception_coef = -0.01
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
-        self.half_w = 1.5  # half width of gate (real is 0.5)
-        self.half_h = 1.5  # half height of gate (real is 0.5)
+        self.half_w = 0.5  # half width of gate (real is 0.5)
+        self.half_h = 0.5  # half height of gate (real is 0.5)
         self.gate_depth = 0.5  # depth of gate
         self.v_max = 99
         self.sim_dt = 0.00833333333
@@ -169,7 +169,6 @@ class QuadcopterGatesVec(VecEnv):
                 self._done[i] = True
             else:
                 self._full_obs[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
-
 
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
@@ -296,7 +295,7 @@ class QuadcopterGatesVec(VecEnv):
         if self.randomize_gates:
             self.modifyResetPosition(np.array([-5, 20, -5, 23, 5, 14], dtype=np.float32))
         else:
-            self.modifyResetPosition(np.array([0, 1, 0, 1, 5, 6], dtype=np.float32))
+            self.modifyResetPosition(np.array([0, 1, 0, 1, 0, 1], dtype=np.float32))
 
         # start each drone at a random x, y, z
         # else it spawns anywhere random from 0-1
@@ -307,14 +306,13 @@ class QuadcopterGatesVec(VecEnv):
         if self.training:
             for i in range(self.num_envs):
                 best_score = float("inf")
-                for j in range(len(self.gates)):
+                for j in range(len(self.gates[:-1])):
                     dist = np.linalg.norm(self.gates[j] - self._drone_obs[i, 0:3])
                     if dist < best_score:
                         best_score = dist
                         self.cur_gate[i] = j
-                self._prev_gate_dir[i] = self.gates[self.cur_gate[i] - self._drone_obs[i, 0:3]]
+                self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self._drone_obs[i, 0:3]
         self._update_observation()
-        self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
         return self._full_obs.copy()
 
     def reset_and_update_info(self):
@@ -404,8 +402,6 @@ class QuadcopterGatesVec(VecEnv):
         if not self.randomize_gates and success_rate >= 0.9:
             self.randomize_gates = True
             self.ep_successes.clear()
-        elif self.randomize_gates and success_rate < 0.6:
-            self.randomize_gates = False
     
     
     def convert_euler_to_rot_mat(self, euler: np.ndarray):
