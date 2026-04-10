@@ -20,7 +20,7 @@ class QuadcopterGatesVec(VecEnv):
     def __init__(
             self, 
             impl, 
-            max_memory_space: int = 200,
+            max_memory_space: int = 300,
             use_cam: bool = False,
             training: bool = True
          ):
@@ -30,7 +30,7 @@ class QuadcopterGatesVec(VecEnv):
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 22 
         self.num_acts = self.wrapper.getActDim()
-        self.max_episode_steps = 1200
+        self.max_episode_steps = 1800
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
@@ -235,7 +235,7 @@ class QuadcopterGatesVec(VecEnv):
 
         # compute reward and if -1 dont adjust, but if 0 we update reward
         self._compute_reward(action)
-
+        
         # update environments with additional info
         if len(self._extraInfoNames) != 0:
             info = [{'extra_info': {
@@ -303,15 +303,15 @@ class QuadcopterGatesVec(VecEnv):
         self.wrapper.reset(self._drone_obs)
 
         # select closest gate to drones starting point to use
-        if self.training:
-            for i in range(self.num_envs):
-                best_score = float("inf")
-                for j in range(len(self.gates[:-1])):
-                    dist = np.linalg.norm(self.gates[j] - self._drone_obs[i, 0:3])
-                    if dist < best_score:
-                        best_score = dist
-                        self.cur_gate[i] = j
-                self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self._drone_obs[i, 0:3]
+        for i in range(self.num_envs):
+            best_score = float("inf")
+            for j in range(len(self.gates[:-1])):
+                dist = np.linalg.norm(self.gates[j] - self._drone_obs[i, 0:3])
+                if dist < best_score:
+                    best_score = dist
+                    self.cur_gate[i] = j
+            self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self._drone_obs[i, 0:3]
+        
         self._update_observation()
         return self._full_obs.copy()
 
