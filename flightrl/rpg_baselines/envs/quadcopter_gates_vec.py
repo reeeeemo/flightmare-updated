@@ -20,7 +20,7 @@ class QuadcopterGatesVec(VecEnv):
     def __init__(
             self, 
             impl, 
-            max_memory_space: int = 300,
+            max_memory_space: int = 1000,
             use_cam: bool = False,
             training: bool = True
          ):
@@ -30,7 +30,7 @@ class QuadcopterGatesVec(VecEnv):
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 22 
         self.num_acts = self.wrapper.getActDim()
-        self.max_episode_steps = 1800
+        self.max_episode_steps = 2400
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
@@ -87,6 +87,7 @@ class QuadcopterGatesVec(VecEnv):
 
         # curriculum learning vars
         self.ep_successes = deque(maxlen=max_memory_space)
+        self.course_completions = np.zeros(self.num_envs, dtype=int)
         self.randomize_gates = False
         self.training = training
 
@@ -160,7 +161,7 @@ class QuadcopterGatesVec(VecEnv):
                 # self._done[i] = True
             elif on_plane and in_opening:
                 speed = np.linalg.norm(self._full_obs[i, 12:15])
-                self._reward[i] += 30 + min(speed * 2, 20)  # max reward of 20 for extra speed thru gates
+                self._reward[i] += 50 + min(speed * 2, 20)  # max reward of 20 for extra speed thru gates
                 self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
                 self.cur_gate[i] += 1
                 if self.cur_gate[i] < len(self.gates):
@@ -174,6 +175,7 @@ class QuadcopterGatesVec(VecEnv):
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
                 self._reward[i] += 50 + 25 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)  # old was 50
+                self.course_completions[i] = True
             # if done and drone did not go thru all gates, give penalty
             # or if not done but time ran out
             # rudimentary way for timeout since it gives penalty a timestep before end, but C++ will take over if not
@@ -259,7 +261,8 @@ class QuadcopterGatesVec(VecEnv):
             if self._done[i]:
                 eplen = len(self.rewards[i])
                 eprew = sum(self.rewards[i])
-                self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
+                #self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
+                self.ep_successes.append(self.course_completions[i])
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
@@ -301,7 +304,7 @@ class QuadcopterGatesVec(VecEnv):
 
         # randomize course if doing well enough
         if self.randomize_gates:
-            self.modifyResetPosition(np.array([-5, 20, -5, 23, 5, 14], dtype=np.float32))
+            self.modifyResetPosition(np.array([-2, 2, 3, 10, 5, 9], dtype=np.float32))
         else:
             self.modifyResetPosition(np.array([0, 1, 0, 1, 0, 1], dtype=np.float32))
 
@@ -311,13 +314,6 @@ class QuadcopterGatesVec(VecEnv):
         self.wrapper.reset(self._drone_obs)
 
         # select closest gate to drones starting point to use
-        #for i in range(self.num_envs):
-            #best_score = float("inf")
-            #for j in range(len(self.gates[:-1])):
-                #dist = np.linalg.norm(self.gates[j] - self._drone_obs[i, 0:3])
-                #if dist < best_score:
-                    #best_score = dist
-                    #self.cur_gate[i] = j
         self._prev_gate_dir = self.gates[self.cur_gate] - self._drone_obs[:, 0:3]
         
         self._update_observation()
