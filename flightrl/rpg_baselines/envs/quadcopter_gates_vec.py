@@ -87,7 +87,6 @@ class QuadcopterGatesVec(VecEnv):
 
         # curriculum learning vars
         self.ep_successes = deque(maxlen=max_memory_space)
-        self.course_completions = np.zeros(self.num_envs, dtype=int)
         self.randomize_gates = False
         self.training = training
 
@@ -156,10 +155,9 @@ class QuadcopterGatesVec(VecEnv):
                 abs(local_positions[0]) < self.half_w 
                 and abs(local_positions[2]) < self.half_h
             )
-            if on_plane and not in_opening:
-                self._reward[i] -= 1.0 #2
-                # self._done[i] = True
-            elif on_plane and in_opening:
+            if on_plane and not in_opening:  # crash into frame
+                self._reward[i] -= 1.0
+            elif on_plane and in_opening:  # went through frame
                 speed = np.linalg.norm(self._full_obs[i, 12:15])
                 self._reward[i] += 50 + min(speed * 2, 20)  # max reward of 20 for extra speed thru gates
                 self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
@@ -175,7 +173,6 @@ class QuadcopterGatesVec(VecEnv):
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
                 self._reward[i] += 50 + 25 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)  # old was 50
-                self.course_completions[i] = True
             # if done and drone did not go thru all gates, give penalty
             # or if not done but time ran out
             # rudimentary way for timeout since it gives penalty a timestep before end, but C++ will take over if not
@@ -261,8 +258,7 @@ class QuadcopterGatesVec(VecEnv):
             if self._done[i]:
                 eplen = len(self.rewards[i])
                 eprew = sum(self.rewards[i])
-                #self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
-                self.ep_successes.append(self.course_completions[i])
+                self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
