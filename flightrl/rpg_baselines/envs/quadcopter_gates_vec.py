@@ -20,7 +20,7 @@ class QuadcopterGatesVec(VecEnv):
     def __init__(
             self, 
             impl, 
-            max_memory_space: int = 1000,
+            max_memory_space: int = 10000,
             use_cam: bool = False,
             training: bool = True
          ):
@@ -30,7 +30,7 @@ class QuadcopterGatesVec(VecEnv):
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 22 
         self.num_acts = self.wrapper.getActDim()
-        self.max_episode_steps = 2400
+        self.max_episode_steps = 2400 # 1000 # 
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
@@ -63,18 +63,18 @@ class QuadcopterGatesVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.lin_vel_coef = 2.0 # was 4
-        self.ang_vel_coef = -0.005  # instead of -0.002
+        self.lin_vel_coef = 1.0 # was 4
+        self.ang_vel_coef = -0.001  # instead of -0.002
         self.act_coef = -0.10
-        self.offset_coef = 2
-        self.perception_coef = -0.01
+        self.offset_coef = 1 # prev: 6
+        self.perception_coef = -0.05  # -0.05
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
-        self.half_w = 0.5  # half width of gate (real is 0.5)
-        self.half_h = 0.5  # half height of gate (real is 0.5)
+        self.half_w = 0.7  # half width of gate (real is 0.5)
+        self.half_h = 0.7 # half height of gate (real is 0.5)
         self.gate_depth = 0.5  # depth of gate
         self.v_max = 99
-        self.sim_dt = 0.00833333333
+        self.sim_dt = 0.00833333333 # 0.02 # 
 
         # camera vars
         self.use_cam = use_cam
@@ -127,7 +127,7 @@ class QuadcopterGatesVec(VecEnv):
         progress = np.clip(prev_dist - gate_dist.squeeze(), -self.v_max * self.sim_dt, self.v_max * self.sim_dt)
 
         # prevent instantaneous switching of motors to high/low rpms ("bang bang" motion)
-        excess_change = np.maximum(0.0, np.abs(self._prev_action - action) - 0.3)
+        excess_change = np.maximum(0.0, np.abs(self._prev_action - action) - 0.4)
 
         step_rew = (
             self.lin_vel_coef * progress +
@@ -150,17 +150,25 @@ class QuadcopterGatesVec(VecEnv):
             local_positions = self.rot_mats[self.cur_gate[i]].T @ self._full_obs[i, 0:3]
 
             ### find whether drone has gone through or hit gate
-            on_plane = abs(local_positions[1]) < self.gate_depth
+            # on_plane = abs(local_positions[1]) < self.gate_depth
+            on_plane = -self.gate_depth < local_positions[1] <= 0
             in_opening = (
                 abs(local_positions[0]) < self.half_w 
                 and abs(local_positions[2]) < self.half_h
             )
+            # whether drone is in opening and close to the gate
+            if 0 < local_positions[1] < self.gate_depth and in_opening:
+                gate_vel = self.rot_mats[self.cur_gate[i]].T @ self._full_obs[i, 12:15]
+                self._reward[i] += 0.3 * max(0.0, gate_vel[1])
+
             if on_plane and not in_opening:  # crash into frame
-                self._reward[i] -= 1.0
+                self._reward[i] -= 0.5  # moved from -0.05 to -0.2 (too bad) to -0.5
+                #self._done[i] = True
             elif on_plane and in_opening:  # went through frame
                 speed = np.linalg.norm(self._full_obs[i, 12:15])
-                self._reward[i] += 50 + min(speed * 2, 20)  # max reward of 20 for extra speed thru gates
+                self._reward[i] += 60 + (self.cur_gate[i] * 20) + min(speed * 1.5, 10)
                 self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
+                # update gates and prev gate direction
                 self.cur_gate[i] += 1
                 if self.cur_gate[i] < len(self.gates):
                     self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
@@ -300,15 +308,19 @@ class QuadcopterGatesVec(VecEnv):
 
         # randomize course if doing well enough
         if self.randomize_gates:
-            self.modifyResetPosition(np.array([-2, 2, 3, 10, 5, 9], dtype=np.float32))
+            self.modifyResetPosition(np.array([-2, 2, 3, 7, 0, 9], dtype=np.float32))
         else:
             self.modifyResetPosition(np.array([0, 1, 0, 1, 0, 1], dtype=np.float32))
+
 
         # start each drone at a random x, y, z
         # else it spawns anywhere random from 0-1
         # lin velocity is randomized from 0-1 too
         self.wrapper.reset(self._drone_obs)
 
+        for i in range(self.num_envs):
+            dists = np.linalg.norm(self.gates - self._drone_obs[i, 0:3], axis=1)
+            self.cur_gate[i] = np.argmin(dists)
         # select closest gate to drones starting point to use
         self._prev_gate_dir = self.gates[self.cur_gate] - self._drone_obs[:, 0:3]
         
@@ -399,7 +411,7 @@ class QuadcopterGatesVec(VecEnv):
             return
         
         success_rate = sum(self.ep_successes) / len(self.ep_successes)
-        if not self.randomize_gates and success_rate >= 0.9:
+        if not self.randomize_gates and success_rate >= 0.6:
             self.randomize_gates = True
             self.ep_successes.clear()
     

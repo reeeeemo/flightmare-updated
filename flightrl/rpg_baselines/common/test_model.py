@@ -47,10 +47,11 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
                 weight_path.replace(".zip", f"_rollout_{n_roll}.avi"),
                 fourcc, 30.0, (320, 320)
             )
-
+        total_rew = 0
         while not (done or (ep_len >= max_ep_length)):
             act, _ = model.predict(obs, deterministic=True)
             obs, rew, done, infos = env.step(act)
+            total_rew += rew
             ep_len += 1
             
             if vid:
@@ -67,7 +68,7 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
             actions.append(act[0, :].tolist())
         if vid:
             out.release()
-        print(f"\n\nEpisode ended: step={ep_len}. gate={env.venv.cur_gate[0]}. rew={sum(env.venv._reward):.2f}\n\n")
+        print(f"\n\nEpisode ended: step={ep_len}. gate={env.venv.cur_gate[0]}. rew={sum(total_rew):.2f}\n\n")
         pos = np.asarray(pos)
         dpos = np.asarray(dpos)
         euler = np.asarray(euler)
