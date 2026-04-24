@@ -134,7 +134,7 @@ Scalar QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs) {
 
 bool QuadrotorEnv::isTerminalState(Scalar &reward) {
   if (quad_state_.x(QS::POSZ) <= 0.02) {
-    reward = -1.0;
+    reward = -10.0;
     return true;
   }
   if (cmd_.t >= max_t_) {

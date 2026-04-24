@@ -40,6 +40,10 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
         pos, euler, dpos, deuler = [], [], [], []
         actions = []
         obs, done, ep_len = env.reset(), False, 0
+        print("Drone spawn pos:", env.venv._drone_obs[0, 0:3])  # x, y, z
+        print("Gate direction (normalized obs):", obs[0, 0:3])  # should be finite, not huge
+        first_act, _ = model.predict(obs, deterministic=True)
+        print("First action (thrust, roll, pitch, yaw):", first_act[0])  # thrust should be > 0
 
         if vid:
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
@@ -68,7 +72,7 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
             actions.append(act[0, :].tolist())
         if vid:
             out.release()
-        print(f"\n\nEpisode ended: step={ep_len}. gate={env.venv.cur_gate[0]}. rew={sum(total_rew):.2f}\n\n")
+        print(f"\n\nEpisode ended: step={ep_len}. gate={env.venv.cur_gate[0]}. rew={rew}\n\n")
         pos = np.asarray(pos)
         dpos = np.asarray(dpos)
         euler = np.asarray(euler)
