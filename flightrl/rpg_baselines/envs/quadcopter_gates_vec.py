@@ -30,7 +30,7 @@ class QuadcopterGatesVec(VecEnv):
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 22 
         self.num_acts = self.wrapper.getActDim()
-        self.max_episode_steps = 500 # 2400 # 1500
+        self.max_episode_steps = 300 # 2400 # 1500
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
@@ -127,7 +127,7 @@ class QuadcopterGatesVec(VecEnv):
         progress = np.clip(prev_dist - gate_dist.squeeze(), -self.v_max * self.sim_dt, self.v_max * self.sim_dt)
 
         # prevent instantaneous switching of motors to high/low rpms ("bang bang" motion)
-        excess_change = np.maximum(0.0, np.abs(self._prev_action - action) - 0.4)
+        excess_change = np.maximum(0.0, np.abs(self._prev_action - action) - 0.3)
 
         step_rew = (
             self.lin_vel_coef * progress +
@@ -269,6 +269,7 @@ class QuadcopterGatesVec(VecEnv):
                 self.rewards[i].clear()
 
         self._prev_action[self._done] = 0
+        self.cur_gate[self._done] = 0
 
         return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
@@ -315,9 +316,9 @@ class QuadcopterGatesVec(VecEnv):
         # lin velocity is randomized from 0-1 too
         self.wrapper.reset(self._drone_obs)
 
-        #for i in range(self.num_envs):
-        #    dists = np.linalg.norm(self.gates - self._drone_obs[i, 0:3], axis=1)
-        #    self.cur_gate[i] = np.argmin(dists)
+        for i in range(self.num_envs):
+            dists = np.linalg.norm(self.gates - self._drone_obs[i, 0:3], axis=1)
+            self.cur_gate[i] = np.argmin(dists)
         # select closest gate to drones starting point to use
         self._prev_gate_dir = self.gates[self.cur_gate] - self._drone_obs[:, 0:3]
         
@@ -404,12 +405,12 @@ class QuadcopterGatesVec(VecEnv):
     def curriculum_callback(self):
         """Increase difficulty of gate problem if consistently successful.
         """
-        return
         if not self.ep_successes:
             return
         
         success_rate = sum(self.ep_successes) / len(self.ep_successes)
-        if not self.randomize_gates and success_rate >= 0.6:
+        print(f"success_rate: {success_rate}")
+        if not self.randomize_gates and success_rate >= 0.45:
             self.randomize_gates = True
             self.ep_successes.clear()
     

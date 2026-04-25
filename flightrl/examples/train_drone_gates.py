@@ -162,7 +162,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(4e7),
+            total_timesteps=int(2e7),
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
@@ -174,7 +174,7 @@ def main():
     else:
         env = VecNormalize.load(args.norm_weight, env)
         env.training = False
-        #env.venv.randomize_gates = True
+        env.venv.randomize_gates = True
         model = PPO.load(args.weight, env=env, device="cpu")
         test_model(env, model, render=args.render, weight_path=args.weight, vid=args.camera, vision_weights=args.wv)
 
