@@ -65,6 +65,8 @@ def parser():
                         help="To add a camera onto each environment for detections")
     parser.add_argument('--wv', '--vision_weights', type=str, default='',
                         help="vision weights for camera inference")
+    parser.add_argument('--r', '--randomize', type=int, default=0,
+                        help="randomize gates activatd")
     return parser
 
 def main():
@@ -97,6 +99,7 @@ def main():
         use_cam=args.camera,
         training=(not args.render)
     )
+    env.randomize_gates = bool(args.r)
 
     # set random seed
     configure_random_seed(args.seed, env=env)
@@ -108,24 +111,50 @@ def main():
         saver = U.ConfigurationSaver(log_dir=log_dir)
 
     # add gates to environment
-    positions = np.array([
-        [0, 7.5, 7],
-        [0, 13.5, 10],
-        [3, 19.5, 12],
-        [9, 21.5, 12],
-        [15, 19.5, 12],
-        [18, 13.5, 10],
-        [18, 7.5, 7]
-    ], dtype=np.float32)
-    rotations = np.array([
-        [1, 0, 0, 0],
-        [np.cos(np.pi/8), np.sin(np.pi/8), 0, 0], # tilted up
-        [-np.cos(np.pi/12), 0, 0, np.sin(np.pi/12)], # tiled right
-        [-np.cos(np.pi/4), 0, 0, np.sin(np.pi/4)], # right
-        [np.cos(np.pi/3), 0, 0, -np.sin(np.pi/3)], # tiled left
-        [np.cos(np.pi/12), np.sin(np.pi/12), 0, 0],
-        [1, 0, 0, 0]
-    ], dtype=np.float32)
+    if args.r and args.render:
+        n_gates = np.random.randint(6, 15)
+        n_gates_arr = np.arange(n_gates)
+
+        # randomize positions
+        positions = np.zeros((n_gates, 3), dtype=np.float32)
+        for i in range(n_gates):  # x within 2 of the previous gates
+            old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
+            old_pos_z = positions[i-1, 2] if i-1 >= 0 else 5
+            prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
+            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(-5, 5)
+            positions[i, 2] = np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 5.0, np.inf)
+        # randomize y positions and double check
+        idx_offsets = np.ones((n_gates), dtype=np.int32)
+        positions[:, 1] = np.random.uniform((n_gates_arr+idx_offsets)*4,(n_gates_arr+idx_offsets)*5) # y always close but not intersecting/too close
+        for i in range(1, n_gates):
+            positions[i, 1] = max(positions[i, 1], positions[i-1, 1] + 3.0)    
+        
+        # randomize rotations
+        half_angles = [(np.random.uniform(-np.pi/4, np.pi/4) / 2) for _ in range(n_gates)] 
+        axes = np.random.randint(0, 3, n_gates)
+            
+        rotations = np.zeros((n_gates, 4), dtype=np.float32)
+        rotations[:, 0] = np.cos(half_angles)
+        rotations[n_gates_arr, axes + 1] = np.sin(half_angles)
+    else:
+        positions = np.array([
+            [0, 7.5, 7],
+            [0, 13.5, 10],
+            [3, 19.5, 12],
+            [9, 21.5, 12],
+            [15, 19.5, 12],
+            [18, 13.5, 10],
+            [18, 7.5, 7]
+        ], dtype=np.float32)
+        rotations = np.array([
+            [1, 0, 0, 0],
+            [np.cos(np.pi/8), np.sin(np.pi/8), 0, 0], # tilted up
+            [-np.cos(np.pi/12), 0, 0, np.sin(np.pi/12)], # tiled right
+            [-np.cos(np.pi/4), 0, 0, np.sin(np.pi/4)], # right
+            [np.cos(np.pi/3), 0, 0, -np.sin(np.pi/3)], # tiled left
+            [np.cos(np.pi/12), np.sin(np.pi/12), 0, 0],
+            [1, 0, 0, 0]
+        ], dtype=np.float32)
 
     env.addGate(positions, rotations)
     reset_timesteps = False
@@ -162,7 +191,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(2e7),
+            total_timesteps=int(6e7),
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
@@ -174,7 +203,6 @@ def main():
     else:
         env = VecNormalize.load(args.norm_weight, env)
         env.training = False
-        env.venv.randomize_gates = True
         model = PPO.load(args.weight, env=env, device="cpu")
         test_model(env, model, render=args.render, weight_path=args.weight, vid=args.camera, vision_weights=args.wv)
 

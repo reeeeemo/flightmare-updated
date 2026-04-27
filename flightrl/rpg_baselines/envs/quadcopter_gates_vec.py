@@ -30,7 +30,7 @@ class QuadcopterGatesVec(VecEnv):
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 22 
         self.num_acts = self.wrapper.getActDim()
-        self.max_episode_steps = 300 # 2400 # 1500
+        self.max_episode_steps = 500 # 2400 # 1500
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
@@ -66,12 +66,12 @@ class QuadcopterGatesVec(VecEnv):
         self.lin_vel_coef = 1 # was 1
         self.ang_vel_coef = -0.001  # instead of -0.002
         self.act_coef = -0.005
-        self.offset_coef = 1 # prev: 6
+        self.offset_coef = 3 # prev: 6
         self.perception_coef = -0.05  # -0.05
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
-        self.half_w = 0.7  # half width of gate (real is 0.5)
-        self.half_h = 0.7 # half height of gate (real is 0.5)
+        self.half_w = 1.5 #inner width # (real is 0.5)
+        self.half_h = 1.5 # inner height (real is 0.5)
         self.gate_depth = 1.0  # depth of gate
         self.v_max = 99
         self.sim_dt = 0.02 # 0.02 # 0.00833333333
@@ -158,12 +158,12 @@ class QuadcopterGatesVec(VecEnv):
             )
 
             if on_plane and not in_opening:  # crash into frame
-                self._reward[i] -= 0.5  # moved from -0.05 to -0.2 (too bad) to -0.5
-                #self._done[i] = True
+                #self._reward[i] -= 0.5  # moved from -0.05 to -0.2 (too bad) to -0.5
+                self._done[i] = True
             elif on_plane and in_opening:  # went through frame
                 speed = np.linalg.norm(self._full_obs[i, 12:15])
-                self._reward[i] += 10 #(self.cur_gate[i] * 20) + min(speed * 1.5, 30)
-                #self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
+                self._reward[i] += 10 + min(speed * 1.5, 10)
+                self._reward[i] -= self.offset_coef * (local_positions[0]**2 + local_positions[2]**2)
                 # update gates and prev gate direction
                 self.cur_gate[i] += 1
                 if self.cur_gate[i] < len(self.gates):
@@ -304,21 +304,11 @@ class QuadcopterGatesVec(VecEnv):
         self.cur_gate = np.zeros(self.num_envs, dtype=int)
         self._prev_action[:] = 0
 
-        # randomize course if doing well enough
-        if self.randomize_gates:
-            self.modifyResetPosition(np.array([-2, 18, 3, 20, 0, 12], dtype=np.float32)) # -2, 2, 3, 7, 0, 9
-        else:
-            self.modifyResetPosition(np.array([0, 1, 0, 1, 0, 1], dtype=np.float32))
-
-
         # start each drone at a random x, y, z
         # else it spawns anywhere random from 0-1
         # lin velocity is randomized from 0-1 too
         self.wrapper.reset(self._drone_obs)
 
-        for i in range(self.num_envs):
-            dists = np.linalg.norm(self.gates - self._drone_obs[i, 0:3], axis=1)
-            self.cur_gate[i] = np.argmin(dists)
         # select closest gate to drones starting point to use
         self._prev_gate_dir = self.gates[self.cur_gate] - self._drone_obs[:, 0:3]
         
@@ -360,7 +350,8 @@ class QuadcopterGatesVec(VecEnv):
         self.wrapper.addGate(positions, rotations)
         self.gates = positions.copy()
         self.rot_mats = self.convert_quat_to_rot_mat(rotations.copy())
-
+        #print(f"gate positions:{self.gates}\n\ngate rotations:{rotations}\n\n")
+        
     def modifyResetPosition(self, positions: np.ndarray):
         """Modify min/max x,y,z positions for drone to initialize from.
         
@@ -410,9 +401,37 @@ class QuadcopterGatesVec(VecEnv):
         
         success_rate = sum(self.ep_successes) / len(self.ep_successes)
         print(f"success_rate: {success_rate}")
-        if not self.randomize_gates and success_rate >= 0.45:
+        if not self.randomize_gates and success_rate >= 0.25:
             self.randomize_gates = True
             self.ep_successes.clear()
+        # randomize course with # of gates if doing well enough
+        elif self.randomize_gates:
+            n_gates = np.random.randint(6, 15)
+            n_gates_arr = np.arange(n_gates)
+
+            # randomize positions
+            positions = np.zeros((n_gates, 3), dtype=np.float32)
+            for i in range(n_gates):  # x within 2 of the previous gates
+                old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
+                old_pos_z = positions[i-1, 2] if i-1 >= 0 else 5
+                prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
+                positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(-5, 5)
+                positions[i, 2] = np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 5.0, np.inf)
+            # randomize y positions and double check
+            idx_offsets = np.ones((n_gates), dtype=np.int32)
+            positions[:, 1] = np.random.uniform((n_gates_arr+idx_offsets)*4,(n_gates_arr+idx_offsets)*5) # y always close but not intersecting/too close
+            for i in range(1, n_gates):
+                positions[i, 1] = max(positions[i, 1], positions[i-1, 1] + 3.0)    
+            
+            # randomize rotations
+            half_angles = [(np.random.uniform(-np.pi/4, np.pi/4) / 2) for _ in range(n_gates)] 
+            axes = np.random.randint(0, 3, n_gates)
+            
+            rotations = np.zeros((n_gates, 4), dtype=np.float32)
+            rotations[:, 0] = np.cos(half_angles)
+            rotations[n_gates_arr, axes + 1] = np.sin(half_angles)
+            
+            self.addGate(positions, rotations)
     
     
     def convert_euler_to_rot_mat(self, euler: np.ndarray):
