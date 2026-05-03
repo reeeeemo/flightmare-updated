@@ -112,7 +112,7 @@ def main():
 
     # add gates to environment
     if args.r and args.render:
-        n_gates = np.random.randint(6, 15)
+        n_gates = np.random.randint(6, 11)
         n_gates_arr = np.arange(n_gates)
 
         # randomize positions
@@ -169,7 +169,7 @@ def main():
                     net_arch=dict(pi=[128, 128], vf=[128, 128])),
                 env=env,
                 gae_lambda=0.95,
-                gamma=0.99,  # 0.999
+                gamma=0.999,  # 0.999
                 # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
                 n_steps=2048,
                 ent_coef=0.001, # 0.005, 0.001 worked best so far
@@ -191,7 +191,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(6e7),
+            total_timesteps=int(6e7), #normally 6e7
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
