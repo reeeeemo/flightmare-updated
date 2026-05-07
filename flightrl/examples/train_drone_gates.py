@@ -27,11 +27,16 @@ from flightgym import QuadrotorEnv_v1
 #   --save_dir <save_dir>   (default ./saved)
 #   --seed <seed_int>   (default 0)
 #   --weight <saved_quadcopter_zip> (can also use -w)
+#   --norm_weight <saved_quadcopter_normalization_stats> (can also use -wn)
+#   --camera <1/0> (default 0)
+#   --vision_weights <saved_vision_pt> (can also use --wv)
+#   --randomize <1/0> (default 0) (can also use -r)
 # Example:
 # python3 train_drone_gates.py
 #   --render 1
 #   --train 0
 #   --weight ./saved/quadrotor_env.zip
+#   --norm_weight ./saved/quadrotor_env/vec_normalize.pkl (optional)
 
 class CurriculumCallback(BaseCallback):
     def _on_rollout_start(self) -> None:
@@ -125,9 +130,9 @@ def main():
             positions[i, 2] = np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 5.0, np.inf)
         # randomize y positions and double check
         idx_offsets = np.ones((n_gates), dtype=np.int32)
-        positions[:, 1] = np.random.uniform((n_gates_arr+idx_offsets)*4,(n_gates_arr+idx_offsets)*5) # y always close but not intersecting/too close
+        positions[:, 1] = np.random.uniform((n_gates_arr+idx_offsets)*6,(n_gates_arr+idx_offsets)*7) # y always close but not intersecting/too close
         for i in range(1, n_gates):
-            positions[i, 1] = max(positions[i, 1], positions[i-1, 1] + 3.0)    
+            positions[i, 1] = max(positions[i, 1], positions[i-1, 1] + 5.0)    
         
         # randomize rotations
         half_angles = [(np.random.uniform(-np.pi/4, np.pi/4) / 2) for _ in range(n_gates)] 
@@ -166,7 +171,7 @@ def main():
                 tensorboard_log=saver.data_dir,
                 policy="MlpPolicy",  # check activation function
                 policy_kwargs=dict(activation_fn=torch.nn.ReLU,
-                    net_arch=dict(pi=[128, 128], vf=[128, 128])),
+                    net_arch=dict(pi=[64, 64], vf=[64, 64])), # 128, 128, 128, 128
                 env=env,
                 gae_lambda=0.95,
                 gamma=0.999,  # 0.999
@@ -191,7 +196,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(6e7), #normally 6e7
+            total_timesteps=int(1.2e8), #normally 6e7
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
