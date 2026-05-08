@@ -70,9 +70,9 @@ class QuadcopterGatesVec(VecEnv):
         self.perception_coef = -0.05  # -0.05
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
-        self.half_w = 1.0 #inner width # (real is 0.5)
-        self.half_h = 1.0 # inner height (real is 0.5)
-        self.gate_depth = 1.0  # depth of gate
+        self.half_w = 0.75 # half of inner width
+        self.half_h = 0.75 # half of inner height
+        self.gate_depth = 0.26  # depth of gate
         self.v_max = 99
         self.sim_dt = 0.00833333333 # 0.02 # 0.00833333333
 
@@ -118,7 +118,7 @@ class QuadcopterGatesVec(VecEnv):
         # only penalize if above 60 degrees
         forward_axis = self._full_obs[:, 3:12].reshape(self.num_envs, 3, 3)[:, :, 1]
         up_axis = self._full_obs[:, 3:12].reshape(self.num_envs, 3, 3)[:, :, 2]
-        cam_forward = forward_axis * np.cos(np.pi/4) + up_axis * np.sin(np.pi/4)
+        cam_forward = forward_axis * np.cos(np.radians(20)) + up_axis * np.sin(np.radians(20))
         camera_dev = np.sum(gate_dir_norm * cam_forward, axis=1)
         camera_penalty = np.maximum(0.0, np.cos(np.radians(60)) - camera_dev)
         

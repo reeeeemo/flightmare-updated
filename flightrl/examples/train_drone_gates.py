@@ -196,7 +196,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(1.2e8), #normally 6e7
+            total_timesteps=int(6e7), #normally 6e7
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
