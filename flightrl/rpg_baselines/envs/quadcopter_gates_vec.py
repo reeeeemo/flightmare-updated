@@ -89,6 +89,8 @@ class QuadcopterGatesVec(VecEnv):
         self.ep_successes = deque(maxlen=max_memory_space)
         self.randomize_gates = False
         self.training = training
+        self.n_gates = 1 
+        self.p_target = 0.85
 
         self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
         self._last_imgs = np.zeros((self.num_envs, 320, 320, 3), dtype=np.float32)
@@ -150,8 +152,8 @@ class QuadcopterGatesVec(VecEnv):
             local_positions = self.rot_mats[self.cur_gate[i]].T @ self._full_obs[i, 0:3]
 
             ### find whether drone has gone through or hit gate
-            # on_plane = abs(local_positions[1]) < self.gate_depth
-            on_plane = -self.gate_depth < local_positions[1] <= 0
+            on_plane = abs(local_positions[1]) < self.gate_depth
+            #on_plane = -self.gate_depth < local_positions[1] <= 0
             in_opening = (
                 abs(local_positions[0]) < self.half_w 
                 and abs(local_positions[2]) < self.half_h
@@ -393,46 +395,33 @@ class QuadcopterGatesVec(VecEnv):
         raise RuntimeError('This method is not implemented')
 
     def curriculum_callback(self):
-        """Increase difficulty of gate problem if consistently successful.
+        """Increase # of random gates if consistently successful during training.
         """
         if not self.ep_successes:
             return
         
         success_rate = sum(self.ep_successes) / len(self.ep_successes)
         print(f"success_rate: {success_rate}")
-        if not self.randomize_gates and success_rate >= 0.45:
-            self.randomize_gates = True
+        print(f"num_gates: {self.n_gates}")
+        if self.randomize_gates:
+            self.set_random_rotation_gate(success_rate)
+    
+    
+    def set_random_rotation_gate(self, success_rate: float):
+        """Set random position and rotations of gates.
+        
+        Set number of gates and increase if success rate is
+        greater than course completion rate (probability per gate^n_gates).
+        """
+        # anyhting under p^5 (>0.45) overfits since completion % is so high, causing std degradation
+        # anything over p^5 (<0.45) struggles with small sample sizes, cannot hit 45% course completion
+        # ^^ note that 45% course completion for p^11 = 0.93% per gate accuracy :p
+        threshold = min(0.45, self.p_target**self.n_gates)
+        if success_rate >= threshold:
+            self.n_gates = min(self.n_gates+1, 14)
             self.ep_successes.clear()
-        # randomize course with # of gates if doing well enough
-        # 10% chance to go back to original course with curvature
-        elif self.randomize_gates:
-            chance = np.random.uniform(0.0, 1.0)
-            if chance > 0.3:
-                self.set_random_rotation_gate()
-            else:
-                positions = np.array([
-                    [0, 7.5, 7],
-                    [0, 13.5, 10],
-                    [3, 19.5, 12],
-                    [9, 21.5, 12],
-                    [15, 19.5, 12],
-                    [18, 13.5, 10],
-                    [18, 7.5, 7]
-                ], dtype=np.float32)
-                rotations = np.array([
-                    [1, 0, 0, 0],
-                    [np.cos(np.pi/8), np.sin(np.pi/8), 0, 0], # tilted up
-                    [-np.cos(np.pi/12), 0, 0, np.sin(np.pi/12)], # tiled right
-                    [-np.cos(np.pi/4), 0, 0, np.sin(np.pi/4)], # right
-                    [np.cos(np.pi/3), 0, 0, -np.sin(np.pi/3)], # tiled left
-                    [np.cos(np.pi/12), np.sin(np.pi/12), 0, 0],
-                    [1, 0, 0, 0]
-                ], dtype=np.float32)
-                self.addGate(positions, rotations)
-    
-    
-    def set_random_rotation_gate(self):
-        n_gates = np.random.randint(6, 11)
+        #n_gates = np.random.randint(6, 11)
+        n_gates = self.n_gates
         n_gates_arr = np.arange(n_gates)
 
         # randomize positions

@@ -49,7 +49,7 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
             out = cv2.VideoWriter(
                 weight_path.replace(".zip", f"_rollout_{n_roll}.avi"),
-                fourcc, 30.0, (320, 320)
+                fourcc, 30.0, (640, 360)
             )
         total_rew = 0
         while not (done or (ep_len >= max_ep_length)):
