@@ -23,7 +23,7 @@ QuadrotorEnv::QuadrotorEnv(const std::string &cfg_path)
   quadrotor_ptr_->updateDynamics(dynamics);
 
   // define a bounding box
-  world_box_ << -100, 100, -100, 100, 0, 100;
+  world_box_ << -500, 500, -500, 500, 0, 500;
   if (!quadrotor_ptr_->setWorldBox(world_box_)) {
     logger_.error("cannot set wolrd box");
   };

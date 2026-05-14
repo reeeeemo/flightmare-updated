@@ -30,7 +30,7 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
     ax_action1 = fig.add_subplot(gs[4, 3:6])
     ax_action2 = fig.add_subplot(gs[4, 6:9])
     ax_action3 = fig.add_subplot(gs[4, 9:12])
-
+    vision_weights = "" # just temp for now
     max_ep_length = env.max_episode_steps
     if render:
         env.connectUnity()
@@ -40,10 +40,6 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
         pos, euler, dpos, deuler = [], [], [], []
         actions = []
         obs, done, ep_len = env.reset(), False, 0
-        print("Drone spawn pos:", env.venv._drone_obs[0, 0:3])  # x, y, z
-        print("Gate direction (normalized obs):", obs[0, 0:3])  # should be finite, not huge
-        first_act, _ = model.predict(obs, deterministic=True)
-        print("First action (thrust, roll, pitch, yaw):", first_act[0])  # thrust should be > 0
 
         if vid:
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
@@ -61,7 +57,8 @@ def test_model(env, model, render=False, num_rollouts: int = 5, weight_path: str
             if vid:
                 frame = np.array(env.venv.rgb_image[0], dtype=np.uint8)
                 if vision_weights:
-                    out.write(vis_model(frame, device=("cuda" if torch.cuda.is_available() else "cpu"))[0].plot())
+                    results = vis_model(frame, device=("cuda" if torch.cuda.is_available() else "cpu"))
+                    out.write(results[0].plot())
                 else:
                     out.write(frame)
 

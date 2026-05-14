@@ -102,7 +102,8 @@ def main():
     env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         use_cam=args.camera,
-        training=(not args.render)
+        training=(not args.render),
+        vision_weights=args.wv
     )
     env.randomize_gates = bool(args.r)
 
@@ -120,27 +121,29 @@ def main():
         n_gates = np.random.randint(6, 11)
         n_gates_arr = np.arange(n_gates)
 
-        # randomize positions
+        # randomize positions / rotations
         positions = np.zeros((n_gates, 3), dtype=np.float32)
-        for i in range(n_gates):  # x within 2 of the previous gates
+        rotations = np.zeros((n_gates, 4), dtype=np.float32)
+        for i in range(n_gates):
             old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
+            old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0
             old_pos_z = positions[i-1, 2] if i-1 >= 0 else 5
             prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
-            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(-5, 5)
+            #-5, 5 for p1, -12 12 for p2
+            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(-12, 12)
+            #6-7 p1, 8-10 p2
+            positions[i, 1] = old_pos_y + np.random.uniform(8,10) # y always close but not intersecting/too close
             positions[i, 2] = np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 5.0, np.inf)
-        # randomize y positions and double check
-        idx_offsets = np.ones((n_gates), dtype=np.int32)
-        positions[:, 1] = np.random.uniform((n_gates_arr+idx_offsets)*6,(n_gates_arr+idx_offsets)*7) # y always close but not intersecting/too close
-        for i in range(1, n_gates):
-            positions[i, 1] = max(positions[i, 1], positions[i-1, 1] + 5.0)    
-        
-        # randomize rotations
-        half_angles = [(np.random.uniform(-np.pi/4, np.pi/4) / 2) for _ in range(n_gates)] 
-        axes = np.random.randint(0, 3, n_gates)
             
-        rotations = np.zeros((n_gates, 4), dtype=np.float32)
-        rotations[:, 0] = np.cos(half_angles)
-        rotations[n_gates_arr, axes + 1] = np.sin(half_angles)
+            # new rot based on approach angle from cur gate + noise
+            approach_dx = positions[i, 0] - old_pos_x
+            approach_dy = positions[i, 1] - old_pos_y
+            new_yaw = np.arctan2(approach_dx, approach_dy) + np.random.uniform(-np.pi/4, np.pi/4)
+            new_yaw = np.clip(new_yaw, -np.pi/4, np.pi/4)
+            half = new_yaw / 2
+            
+            rotations[i, 0] = 1 #np.cos(half)
+            rotations[i, 3] = 0 #np.sin(half)        
     else:
         positions = np.array([
             [0, 7.5, 7],
@@ -161,6 +164,8 @@ def main():
             [1, 0, 0, 0]
         ], dtype=np.float32)
 
+    print(f"gate pos: {positions}")
+    print(f"gate rot: {rotations}")
     env.addGate(positions, rotations)
     reset_timesteps = False
 
@@ -177,7 +182,7 @@ def main():
                 gamma=0.999,  # 0.999
                 # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
                 n_steps=2048,
-                ent_coef=0.001, # 0.005, 0.001 worked best so far
+                ent_coef=0.005, # 0.005, 0.001 worked best so far
                 learning_rate=1e-4,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
@@ -196,7 +201,7 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(6e7), #normally 6e7
+            total_timesteps=int(4e7), #normally 6e7
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()

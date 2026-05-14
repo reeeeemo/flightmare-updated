@@ -3,6 +3,8 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from collections import deque
 import cv2
+from ultralytics import YOLO
+import torch
 
 class QuadcopterGatesVec(VecEnv):
     """Custom Gymnasium environment that simulates a drone flying through gates
@@ -22,6 +24,7 @@ class QuadcopterGatesVec(VecEnv):
             impl, 
             max_memory_space: int = 10000,
             use_cam: bool = False,
+            vision_weights: str = "",
             training: bool = True
          ):
         self.wrapper = impl
@@ -78,6 +81,24 @@ class QuadcopterGatesVec(VecEnv):
 
         # camera vars
         self.use_cam = use_cam
+        self.pose_model = YOLO(vision_weights) if vision_weights else None
+        # inner depth is 0.75x0.75
+        self.object_points = np.array([
+            [-0.75, 0.75, 0], # top left
+            [0.75, 0.75, 0], # top right
+            [0.75, -0.75, 0], # bottom right
+            [-0.75, -0.75, 0] # bottom keft
+        ], dtype=np.float32)
+        self.camera_matrix = np.array([
+            [320, 0, 320],
+            [0, 320, 180],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        self.R_body_cam = np.array([
+            [1, 0, 0],
+            [0, np.sin(np.radians(20)), np.cos(np.radians(20))],
+            [0, -np.cos(np.radians(20)), np.sin(np.radians(20))],
+        ])
 
         # goal gates
         self.gates = np.zeros((0, 3), dtype=np.float32)
@@ -89,11 +110,11 @@ class QuadcopterGatesVec(VecEnv):
         self.ep_successes = deque(maxlen=max_memory_space)
         self.randomize_gates = False
         self.training = training
-        self.n_gates = 1 
+        self.n_gates = 1
         self.p_target = 0.85
 
         self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
-        self._last_imgs = np.zeros((self.num_envs, 320, 320, 3), dtype=np.float32)
+        self._last_imgs = np.zeros((self.num_envs, 640, 360, 3), dtype=np.float32)
         self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
 
     def seed(self, seed=0):
@@ -153,15 +174,13 @@ class QuadcopterGatesVec(VecEnv):
 
             ### find whether drone has gone through or hit gate
             on_plane = abs(local_positions[1]) < self.gate_depth
-            #on_plane = -self.gate_depth < local_positions[1] <= 0
             in_opening = (
                 abs(local_positions[0]) < self.half_w 
                 and abs(local_positions[2]) < self.half_h
             )
 
             if on_plane and not in_opening:  # crash into frame
-                self._reward[i] -= 0.5  # old: -0.5
-                #self._done[i] = True
+                self._reward[i] -= 0.5
             elif on_plane and in_opening:  # went through frame
                 self._reward[i] += 10
                 self._reward[i] += self.offset_coef * (1.0 - (local_positions[0]/self.half_w)**2 - (local_positions[2]/self.half_h)**2)
@@ -213,25 +232,52 @@ class QuadcopterGatesVec(VecEnv):
         center = self.gates[cur_gate_idx]
         right = self.rot_mats[cur_gate_idx, :, 0] * self.half_w
         up = self.rot_mats[cur_gate_idx, :, 2] * self.half_h
-
-        if not self.use_cam:  # use priviledged learning
-            self._full_obs[:, 22:34] = np.concatenate([
-                (center + right + up) - self.drone_pos, # top right
-                (center - right + up) - self.drone_pos, # top left
-                (center + right - up) - self.drone_pos, # bottom right
-                (center - right - up) - self.drone_pos  # bottom left
-            ], axis=1)
-        else:  # use onboard camera
+        
+        if self.use_cam:
             self._last_imgs = self.wrapper.getRGBImage()
-            # TODO: get gate xyz pose from a model and push it to the full obs
+            frames = np.array(self._last_imgs, dtype=np.uint8)
+        
+        if not self.pose_model:  # use priviledged learning
             self._full_obs[:, 22:34] = np.concatenate([
                 (center + right + up) - self.drone_pos, # top right
                 (center - right + up) - self.drone_pos, # top left
                 (center + right - up) - self.drone_pos, # bottom right
                 (center - right - up) - self.drone_pos  # bottom left
             ], axis=1)
+        elif frames.size != 0:  # use onboard camera + vision model if cam can render
+            results = self.pose_model(
+                frames[0],
+                device=("cuda" if torch.cuda.is_available() else "cpu")
+            )
+            print(results)
+            
+            # get most confident and all 4 keypoint gate detection to transform if possible
+            for env_idx, result in enumerate(results):
+                n_det = result.keypoints.xy.shape[0]
+                if n_det == 0:
+                    self._full_obs[env_idx, 22:34] = 0
+                    continue
+                
+                best = result.boxes.conf.argmax()
+                kp_2d = result.keypoints.xy[best].cpu().numpy()
 
-
+                # translate from 2D object pose to 3D camera local position via PnP
+                success, rot_vec, trans_vec = cv2.solvePnP(
+                    self.object_points, kp_2d, self.camera_matrix, np.zeros(4),
+                    flags=cv2.SOLVEPNP_IPPE_SQUARE
+                )
+                if success:
+                    # transform from 3d camera local pos to drone local pos
+                    rot_mat, _ = cv2.Rodrigues(rot_vec)
+                    corners_cam = (rot_mat @ self.object_points.T + trans_vec).T
+                    # 20 deg camera tilt + 0.3 z axis translations
+                    corners_body = (self.R_body_cam @ corners_cam.T).T + np.array([0, 0, 0.3])
+                    R_world = self._full_obs[env_idx, 3:12].reshape(3, 3)
+                    corners_world = (R_world @ corners_body.T).T
+                    self._full_obs[env_idx, 22:34] = corners_world[[1, 0, 2, 3]].flatten()
+                    print(f"rotation vec:\n{rot_vec}")
+                    print(f"trans vec:\n{trans_vec}")
+                
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
 
@@ -420,31 +466,32 @@ class QuadcopterGatesVec(VecEnv):
         if success_rate >= threshold:
             self.n_gates = min(self.n_gates+1, 14)
             self.ep_successes.clear()
-        #n_gates = np.random.randint(6, 11)
         n_gates = self.n_gates
         n_gates_arr = np.arange(n_gates)
 
-        # randomize positions
+        # randomize positions / rotations
         positions = np.zeros((n_gates, 3), dtype=np.float32)
-        for i in range(n_gates):  # x within 2 of the previous gates
+        rotations = np.zeros((n_gates, 4), dtype=np.float32)
+        for i in range(n_gates):
             old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
+            old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0
             old_pos_z = positions[i-1, 2] if i-1 >= 0 else 5
             prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
-            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(-5, 5)
+            #-5, 5 for p1, -12 12 for p2
+            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(-12,12)
+            #6-7 p1, 8-10 p2
+            positions[i, 1] = old_pos_y + np.random.uniform(8, 10) # y always close but not intersecting/too close
             positions[i, 2] = np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 5.0, np.inf)
-        # randomize y positions and double check
-        idx_offsets = np.ones((n_gates), dtype=np.int32)
-        positions[:, 1] = np.random.uniform((n_gates_arr+idx_offsets)*6,(n_gates_arr+idx_offsets)*7) # y always close but not intersecting/too close
-        for i in range(1, n_gates):
-            positions[i, 1] = max(positions[i, 1], positions[i-1, 1] + 5.0)    
             
-        # randomize rotations
-        half_angles = [(np.random.uniform(-np.pi/4, np.pi/4) / 2) for _ in range(n_gates)] 
-        axes = np.random.randint(0, 3, n_gates)
+            # new rot based on approach angle from cur gate + noise
+            approach_dx = positions[i, 0] - old_pos_x
+            approach_dy = positions[i, 1] - old_pos_y
+            new_yaw = np.arctan2(approach_dx, approach_dy) + np.random.uniform(-np.pi/4, np.pi/4)
+            new_yaw = np.clip(new_yaw, -np.pi/4, np.pi/4)
+            half = new_yaw / 2
             
-        rotations = np.zeros((n_gates, 4), dtype=np.float32)
-        rotations[:, 0] = np.cos(half_angles)
-        rotations[n_gates_arr, axes + 1] = np.sin(half_angles)
+            rotations[i, 0] = 1 #np.cos(half)
+            rotations[i, 3] = 0 #np.sin(half)      
             
         self.addGate(positions, rotations)
     

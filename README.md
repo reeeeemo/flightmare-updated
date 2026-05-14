@@ -43,7 +43,7 @@ Build the dockerfile using `docker build -t flightmare .`.
 
 
 After docker is built, to run anything in `flightrl`:
-- Run `pip3 install .` inside of `flightrl`
+- Run `pip3 install -e .` inside of `flightrl`
 
 > Run `export FLIGHTMARE_PATH=/workspace` if running into any other issues unrelated to packages.
 
