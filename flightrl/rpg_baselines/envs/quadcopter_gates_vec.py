@@ -89,15 +89,17 @@ class QuadcopterGatesVec(VecEnv):
             [0.75, -0.75, 0], # bottom right
             [-0.75, -0.75, 0] # bottom keft
         ], dtype=np.float32)
+        # fx = (360/2) / tan(90/2) = 180 = fy since square pixels
         self.camera_matrix = np.array([
-            [320, 0, 320],
-            [0, 320, 180],
+            [180, 0, 320],
+            [0, 180, 180],
             [0, 0, 1]
         ], dtype=np.float32)
+        theta = np.radians(20)
         self.R_body_cam = np.array([
             [1, 0, 0],
-            [0, np.sin(np.radians(20)), np.cos(np.radians(20))],
-            [0, -np.cos(np.radians(20)), np.sin(np.radians(20))],
+            [0, np.sin(theta), np.cos(theta)],
+            [0, -np.cos(theta), np.sin(theta)],
         ])
 
         # goal gates
@@ -233,24 +235,25 @@ class QuadcopterGatesVec(VecEnv):
         right = self.rot_mats[cur_gate_idx, :, 0] * self.half_w
         up = self.rot_mats[cur_gate_idx, :, 2] * self.half_h
         
+        # get images from camera if using
         if self.use_cam:
             self._last_imgs = self.wrapper.getRGBImage()
             frames = np.array(self._last_imgs, dtype=np.uint8)
         
-        if not self.pose_model:  # use priviledged learning
+        if not self.pose_model:
+            # use priviledged learning
             self._full_obs[:, 22:34] = np.concatenate([
                 (center + right + up) - self.drone_pos, # top right
                 (center - right + up) - self.drone_pos, # top left
                 (center + right - up) - self.drone_pos, # bottom right
                 (center - right - up) - self.drone_pos  # bottom left
             ], axis=1)
-        elif frames.size != 0:  # use onboard camera + vision model if cam can render
+        elif frames.size != 0:
+            # use onboard camera + vision model if cam can render
             results = self.pose_model(
                 frames[0],
                 device=("cuda" if torch.cuda.is_available() else "cpu")
             )
-            print(results)
-            
             # get most confident and all 4 keypoint gate detection to transform if possible
             for env_idx, result in enumerate(results):
                 n_det = result.keypoints.xy.shape[0]
@@ -259,15 +262,18 @@ class QuadcopterGatesVec(VecEnv):
                     continue
                 
                 best = result.boxes.conf.argmax()
+                # TR, BR, BL, TL
                 kp_2d = result.keypoints.xy[best].cpu().numpy()
+                print(f"kp: {kp_2d}")
 
                 # translate from 2D object pose to 3D camera local position via PnP
                 success, rot_vec, trans_vec = cv2.solvePnP(
-                    self.object_points, kp_2d, self.camera_matrix, np.zeros(4),
-                    flags=cv2.SOLVEPNP_IPPE_SQUARE
+                    self.object_points, kp_2d[[3, 0, 1, 2]], self.camera_matrix, np.zeros(5),
+                    flags=cv2.SOLVEPNP_ITERATIVE
                 )
                 if success:
                     # transform from 3d camera local pos to drone local pos
+                    # first convert points to camera space
                     rot_mat, _ = cv2.Rodrigues(rot_vec)
                     corners_cam = (rot_mat @ self.object_points.T + trans_vec).T
                     # 20 deg camera tilt + 0.3 z axis translations
@@ -277,6 +283,18 @@ class QuadcopterGatesVec(VecEnv):
                     self._full_obs[env_idx, 22:34] = corners_world[[1, 0, 2, 3]].flatten()
                     print(f"rotation vec:\n{rot_vec}")
                     print(f"trans vec:\n{trans_vec}")
+                    print(f"full obs:\n{self._full_obs[env_idx, 22:34]}")
+                    wawa = np.concatenate([
+                        (center + right + up) - self.drone_pos, # top right
+                        (center - right + up) - self.drone_pos, # top left
+                        (center + right - up) - self.drone_pos, # bottom right
+                        (center - right - up) - self.drone_pos  # bottom left
+                    ], axis=1)
+                    print(f"ground truth:\n{wawa}")
+                    
+                    print(f"kp span: {kp_2d[0][0]-kp_2d[3][0]:.1f}px")
+                    gt_dist = np.linalg.norm(self._full_obs[env_idx, 0:3])
+                    print(f"expected span at dist: {gt_dist:.2f}: {2*0.75*180 / max(gt_dist, 0.1)}")
                 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.

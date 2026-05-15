@@ -30,7 +30,8 @@ from flightgym import QuadrotorEnv_v1
 #   --norm_weight <saved_quadcopter_normalization_stats> (can also use -wn)
 #   --camera <1/0> (default 0)
 #   --vision_weights <saved_vision_pt> (can also use --wv)
-#   --randomize <1/0> (default 0) (can also use -r)
+#   --randomize <1/0> (default 0) (can also use --r)
+#   --build_dataset <1/0> (default 0) (can also use --bd)
 # Example:
 # python3 train_drone_gates.py
 #   --render 1
@@ -71,7 +72,9 @@ def parser():
     parser.add_argument('--wv', '--vision_weights', type=str, default='',
                         help="vision weights for camera inference")
     parser.add_argument('--r', '--randomize', type=int, default=0,
-                        help="randomize gates activatd")
+                        help="randomize gates activated")
+    parser.add_argument('--bd', '--build_dataset', type=int, default=0,
+                        help="builds YOLO-style pose dataset")
     return parser
 
 def main():
@@ -176,13 +179,12 @@ def main():
                 tensorboard_log=saver.data_dir,
                 policy="MlpPolicy",  # check activation function
                 policy_kwargs=dict(activation_fn=torch.nn.ReLU,
-                    net_arch=dict(pi=[64, 64], vf=[64, 64])), # 128, 128, 128, 128
+                    net_arch=dict(pi=[64, 64], vf=[64, 64])), # old: 128, 128, 128, 128
                 env=env,
                 gae_lambda=0.95,
                 gamma=0.999,  # 0.999
-                # n_steps=math.floor(cfg['env']['max_time'] / cfg['env']['ctl_dt']),
                 n_steps=2048,
-                ent_coef=0.005, # 0.005, 0.001 worked best so far
+                ent_coef=0.005, # 0.001: p1, 0.005: p2
                 learning_rate=1e-4,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
@@ -214,7 +216,14 @@ def main():
         env = VecNormalize.load(args.norm_weight, env)
         env.training = False
         model = PPO.load(args.weight, env=env, device="cpu")
-        test_model(env, model, render=args.render, weight_path=args.weight, vid=args.camera, vision_weights=args.wv)
+        test_model(
+            env, model, 
+            render=args.render, 
+            weight_path=args.weight, 
+            vid=args.camera, 
+            vision_weights=args.wv,
+            build_dataset=args.bd
+        )
 
 
 if __name__ == "__main__":
