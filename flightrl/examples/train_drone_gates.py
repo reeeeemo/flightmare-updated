@@ -87,6 +87,9 @@ def main():
     if not args.train:
         cfg["env"]["num_envs"] = 1
         cfg["env"]["num_threads"] = 1
+    else:
+        cfg["env"]["num_envs"] = 20 # policy train: 100 since cpu
+        cfg["env"]["num_threads"] = 1
 
     if args.render:
         cfg["env"]["render"] = "yes"
@@ -184,7 +187,7 @@ def main():
                 gae_lambda=0.95,
                 gamma=0.999,  # 0.999
                 n_steps=2048,
-                ent_coef=0.005, # 0.001: p1, 0.005: p2
+                ent_coef=0.001,
                 learning_rate=1e-4,
                 vf_coef=0.5,
                 max_grad_norm=0.5,

@@ -11,6 +11,8 @@ def convert_to_yolo_labels(env):
     """Convert known gate positions if they are in camera view to YOLO-style
     pose estimation positions for a dataset."""
     
+    fx = 320  # square pixels so fx=fy
+    
     # check each gate is in camera frame then input for label
     yolo_labels = []
     for i in range(len(env.venv.gates)):
@@ -22,7 +24,7 @@ def convert_to_yolo_labels(env):
         
         p_world = np.stack([
             (center - right + up) - drone_pos,  # TL
-                (center + right + up) - drone_pos,  # TR
+            (center + right + up) - drone_pos,  # TR
             (center + right - up) - drone_pos,  # BR
             (center - right - up) - drone_pos  # BL
         ], axis=0)
@@ -38,8 +40,8 @@ def convert_to_yolo_labels(env):
         # forward axis
         if (np.all(p_cam[:, 2] > 0)):
             # camera local pos projected to image pixels
-            u = 320 + 320 * p_cam[:, 0] / p_cam[:, 2]
-            v = 180 + 320 * p_cam[:, 1] / p_cam[:, 2]
+            u = 320 + fx * p_cam[:, 0] / p_cam[:, 2]
+            v = 180 + fx * p_cam[:, 1] / p_cam[:, 2]
             # per corner bool mask, normalize & check visibility
             in_bounds = (u >= 0) & (u <= 640) & (v >= 0) & (v <= 360)
             
@@ -92,36 +94,13 @@ def test_model(
         vision_weights (string): whether to use vision model inference (cam must be true) 
         build_dataset (bool): whether to build dataset (cam must be true)
     """
-    #
-    fig = plt.figure(figsize=(18, 12), tight_layout=True)
-    gs = gridspec.GridSpec(5, 12)
-    #
-    ax_x = fig.add_subplot(gs[0, 0:4])
-    ax_y = fig.add_subplot(gs[0, 4:8])
-    ax_z = fig.add_subplot(gs[0, 8:12])
-    #
-    ax_dx = fig.add_subplot(gs[1, 0:4])
-    ax_dy = fig.add_subplot(gs[1, 4:8])
-    ax_dz = fig.add_subplot(gs[1, 8:12])
-    #
-    ax_euler_x = fig.add_subplot(gs[2, 0:4])
-    ax_euler_y = fig.add_subplot(gs[2, 4:8])
-    ax_euler_z = fig.add_subplot(gs[2, 8:12])
-    #
-    ax_euler_vx = fig.add_subplot(gs[3, 0:4])
-    ax_euler_vy = fig.add_subplot(gs[3, 4:8])
-    ax_euler_vz = fig.add_subplot(gs[3, 8:12])
-    #
-    ax_action0 = fig.add_subplot(gs[4, 0:3])
-    ax_action1 = fig.add_subplot(gs[4, 3:6])
-    ax_action2 = fig.add_subplot(gs[4, 6:9])
-    ax_action3 = fig.add_subplot(gs[4, 9:12])
-
     max_ep_length = env.max_episode_steps
     if render:
         env.connectUnity()
+
     if vision_weights != "":
         vis_model = YOLO(vision_weights)
+
     if build_dataset:
         base_dir = Path(weight_path.replace(".zip", f"_dataset"))
         dataset_iter = 0
@@ -137,8 +116,6 @@ def test_model(
         labels_dir.mkdir(parents=True, exist_ok=True)
     
     for n_roll in range(num_rollouts):
-        pos, euler, dpos, deuler = [], [], [], []
-        actions = []
         obs, done, ep_len = env.reset(), False, 0
 
         # create dataset if vid + dataset flags, else just video if flagged.
@@ -149,7 +126,6 @@ def test_model(
                     weight_path.replace(".zip", f"_rollout_{n_roll}.avi"),
                     fourcc, 30.0, (640, 360)
                 )
-                
         
         # inference of policy
         total_rew = 0
@@ -175,66 +151,9 @@ def test_model(
                 elif not build_dataset:
                     out.write(frame)
 
-            pos.append(obs[0, 0:3].tolist())
-            dpos.append(obs[0, 12:15].tolist())
-            euler.append(obs[0, 3:12].tolist())
-            deuler.append(obs[0, 15:18].tolist())
-            actions.append(act[0, :].tolist())
         if vid and not build_dataset:
             out.release()
         print(f"\n\nEpisode ended: step={ep_len}. gate={env.venv.cur_gate[0]}. rew={rew}\n\n")
-        pos = np.asarray(pos)
-        dpos = np.asarray(dpos)
-        euler = np.asarray(euler)
-        deuler = np.asarray(deuler)
-        actions = np.asarray(actions)
-        #
-        t = np.arange(0, pos.shape[0])
-        ax_x.step(t, pos[:, 0], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_y.step(t, pos[:, 1], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_z.step(t, pos[:, 2], color="C{0}".format(
-            n_roll), label="pos [x, y, z] -- trail: {0}".format(n_roll))
-        #
-        ax_dx.step(t, dpos[:, 0], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_dy.step(t, dpos[:, 1], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_dz.step(t, dpos[:, 2], color="C{0}".format(
-            n_roll), label="vel [x, y, z] -- trail: {0}".format(n_roll))
-        #
-        ax_euler_x.step(t, euler[:, -1], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_euler_y.step(t, euler[:, 0], color="C{0}".format(
-            n_roll), label="trail :{0}".format(n_roll))
-        ax_euler_z.step(t, euler[:, 1], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        #
-        ax_euler_vx.step(t, deuler[:, -1], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_euler_vy.step(t, deuler[:, 0], color="C{0}".format(
-            n_roll), label="trail :{0}".format(n_roll))
-        ax_euler_vz.step(t, deuler[:, 1], color="C{0}".format(
-            n_roll), label=r"$\theta$ [x, y, z] -- trail: {0}".format(n_roll))
-        #
-        ax_action0.step(t, actions[:, 0], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_action1.step(t, actions[:, 1], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_action2.step(t, actions[:, 2], color="C{0}".format(
-            n_roll), label="trail: {0}".format(n_roll))
-        ax_action3.step(t, actions[:, 3], color="C{0}".format(
-            n_roll), label="act [0, 1, 2, 3] -- trail: {0}".format(n_roll))
-    #
+
     if render:
         env.disconnectUnity()
-    ax_z.legend()
-    ax_dz.legend()
-    ax_euler_z.legend()
-    ax_euler_vz.legend()
-    ax_action3.legend()
-    #
-    plt.tight_layout()
-    fig.savefig(weight_path.replace(".zip", ".png"))
-    plt.show()
