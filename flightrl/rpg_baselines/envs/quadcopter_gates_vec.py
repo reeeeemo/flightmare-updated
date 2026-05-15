@@ -91,8 +91,8 @@ class QuadcopterGatesVec(VecEnv):
         ], dtype=np.float32)
         # fx = (360/2) / tan(90/2) = 180 = fy since square pixels
         self.camera_matrix = np.array([
-            [180, 0, 320],
-            [0, 180, 180],
+            [320, 0, 320],
+            [0, 320, 180],
             [0, 0, 1]
         ], dtype=np.float32)
         theta = np.radians(20)
@@ -250,8 +250,9 @@ class QuadcopterGatesVec(VecEnv):
             ], axis=1)
         elif frames.size != 0:
             # use onboard camera + vision model if cam can render
+            print(frames.shape)
             results = self.pose_model(
-                frames[0],
+                list(frames),
                 device=("cuda" if torch.cuda.is_available() else "cpu")
             )
             # get most confident and all 4 keypoint gate detection to transform if possible
@@ -294,7 +295,7 @@ class QuadcopterGatesVec(VecEnv):
                     
                     print(f"kp span: {kp_2d[0][0]-kp_2d[3][0]:.1f}px")
                     gt_dist = np.linalg.norm(self._full_obs[env_idx, 0:3])
-                    print(f"expected span at dist: {gt_dist:.2f}: {2*0.75*180 / max(gt_dist, 0.1)}")
+                    print(f"expected span at dist: {gt_dist:.2f}: {2*0.75*320 / max(gt_dist, 0.1)}")
                 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.

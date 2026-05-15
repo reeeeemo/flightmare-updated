@@ -218,6 +218,7 @@ def main():
         model = PPO.load(args.weight, env=env, device="cpu")
         test_model(
             env, model, 
+            num_rollouts=1,
             render=args.render, 
             weight_path=args.weight, 
             vid=args.camera, 

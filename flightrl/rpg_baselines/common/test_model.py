@@ -35,28 +35,36 @@ def convert_to_yolo_labels(env):
         p_body_offset = p_body - [0, 0, 0.3]  # still in drone pos, just offset by cam z
         p_cam = (env.venv.R_body_cam.T @ p_body_offset.T).T
         
-        # camera local pos projected to image pixels
-        u = 320 + 180 * p_cam[:, 0] / p_cam[:, 2]
-        v = 180 + 180 * p_cam[:, 1] / p_cam[:, 2]
-        w, h = np.max(u) - np.min(u), np.max(v) - np.min(v)
-        if (
-            np.all(p_cam[:, 2] > 0) and # in forward axis
-            np.all((u >= 0) & (u <= 640)) and # within frame
-            np.all((v >= 0) & (v <= 360)) and # within frame
-            w > 10 and h > 10  # not too small
-             ):
-            # normalize 
-            u /= 640
-            v /= 360
-
-            # yolo format for pose:
-            # <class> <xc> <yc> <w> <h> 
-            # <kp1_x> <kp1_y> <kp1_vis> <kp2_x> <kp2_y> <kp2_vis> 
-            # <kp3_x> <kp3_y> <kp3_vis> <kp4_x> <kp4_y> <kp4_vis>
-            temp_str = f"0 {np.mean(u)} {np.mean(v)} {w/640} {h/360}"
-            for i in range(len(u)):
-                temp_str += f" {u[i]} {v[i]} 2"
-            yolo_labels.append(temp_str)
+        # forward axis
+        if (np.all(p_cam[:, 2] > 0)):
+            # camera local pos projected to image pixels
+            u = 320 + 320 * p_cam[:, 0] / p_cam[:, 2]
+            v = 180 + 320 * p_cam[:, 1] / p_cam[:, 2]
+            # per corner bool mask, normalize & check visibility
+            in_bounds = (u >= 0) & (u <= 640) & (v >= 0) & (v <= 360)
+            
+            if np.sum(in_bounds) >= 2:
+                u_vis = u[in_bounds]
+                v_vis = v[in_bounds]
+                w = np.max(u_vis) - np.min(u_vis)
+                h = np.max(v_vis) - np.min(v_vis)
+                
+                if (w > 20 and h > 20): # not too small
+                    u /= 640
+                    v /= 360
+                    cx = (np.max(u[in_bounds]) + np.min(u[in_bounds])) / 2
+                    cy = (np.max(v[in_bounds]) + np.min(v[in_bounds])) / 2
+                    # yolo format for pose:
+                    # <class> <xc> <yc> <w> <h> 
+                    # <kp1_x> <kp1_y> <kp1_vis> <kp2_x> <kp2_y> <kp2_vis> 
+                    # <kp3_x> <kp3_y> <kp3_vis> <kp4_x> <kp4_y> <kp4_vis>
+                    temp_str = f"0 {cx} {cy} {w/640} {h/360}"
+                    for j in range(len(u)):
+                        vis = 2 if in_bounds[j] else 0
+                        kp_x = float(u[j]) if in_bounds[j] else 0.0
+                        kp_y = float(v[j]) if in_bounds[j] else 0.0
+                        temp_str += f" {kp_x} {kp_y} {vis}"
+                    yolo_labels.append(temp_str)
             
     
     return yolo_labels
@@ -108,7 +116,7 @@ def test_model(
     ax_action1 = fig.add_subplot(gs[4, 3:6])
     ax_action2 = fig.add_subplot(gs[4, 6:9])
     ax_action3 = fig.add_subplot(gs[4, 9:12])
-    vision_weights = "" # just temp for now
+
     max_ep_length = env.max_episode_steps
     if render:
         env.connectUnity()
@@ -116,11 +124,11 @@ def test_model(
         vis_model = YOLO(vision_weights)
     if build_dataset:
         base_dir = Path(weight_path.replace(".zip", f"_dataset"))
-        i = 0
+        dataset_iter = 0
         dataset_dir = base_dir
         while dataset_dir.exists():
-            dataset_dir = base_dir.parent / f"{base_dir.name}_{i}"
-            i += 1
+            dataset_dir = base_dir.parent / f"{base_dir.name}_{dataset_iter}"
+            dataset_iter += 1
         # note that all files go into `train` for ease of access.
         dataset_dir.mkdir(parents=True, exist_ok=True)
         images_dir = dataset_dir / "images" / "train"
@@ -160,8 +168,8 @@ def test_model(
                 elif build_dataset and ep_len % 50 == 0:
                     labels = convert_to_yolo_labels(env)
                     if labels:
-                        cv2.imwrite(str(images_dir / f"{n_roll}_{ep_len:010d}.jpg"), frame)
-                        with open(str(labels_dir / f"{n_roll}_{ep_len:010d}.txt"), "w", encoding="utf-8") as f:
+                        cv2.imwrite(str(images_dir / f"{dataset_iter}_{n_roll}_{ep_len:010d}.jpg"), frame)
+                        with open(str(labels_dir / f"{dataset_iter}_{n_roll}_{ep_len:010d}.txt"), "w", encoding="utf-8") as f:
                             for line in labels:
                                 f.write(f"{line}\n")
                 elif not build_dataset:
