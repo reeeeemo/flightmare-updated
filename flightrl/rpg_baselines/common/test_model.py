@@ -11,37 +11,42 @@ def convert_to_yolo_labels(env):
     """Convert known gate positions if they are in camera view to YOLO-style
     pose estimation positions for a dataset."""
     
-    fx = 320  # square pixels so fx=fy
+    fx = 180 #320
+    fy = 180
     
     # check each gate is in camera frame then input for label
     yolo_labels = []
     for i in range(len(env.venv.gates)):
         # get gates world pos relative to drone
         center = env.venv.gates[i]
-        right = env.venv.rot_mats[i, :, 0] * env.venv.half_w
-        up = env.venv.rot_mats[i, :, 2] * env.venv.half_h
+        right = env.venv.rot_mats[i, :, 0] #* env.venv.half_w
+        up = env.venv.rot_mats[i, :, 2] #* env.venv.half_h
         drone_pos = env.venv.drone_pos[0]
-        
+        print(f"gate_{i}")
         p_world = np.stack([
             (center - right + up) - drone_pos,  # TL
             (center + right + up) - drone_pos,  # TR
             (center + right - up) - drone_pos,  # BR
             (center - right - up) - drone_pos  # BL
         ], axis=0)
+        print(f"p_world: {p_world}")
 
         # world pos relative to drone -> drone local position
         R_world = env.venv._full_obs[0, 3:12].reshape(3, 3)
         p_body = (R_world.T @ p_world.T).T
+       # p_body = (R_world @ p_world.T)
+        print(f"p_body: {p_body}")
         
         # drone local position -> camera local position
         p_body_offset = p_body - [0, 0, 0.3]  # still in drone pos, just offset by cam z
         p_cam = (env.venv.R_body_cam.T @ p_body_offset.T).T
+        print(f"p_cam: {p_cam}")
         
         # forward axis
         if (np.all(p_cam[:, 2] > 0)):
             # camera local pos projected to image pixels
             u = 320 + fx * p_cam[:, 0] / p_cam[:, 2]
-            v = 180 + fx * p_cam[:, 1] / p_cam[:, 2]
+            v = 180 + fy * p_cam[:, 1] / p_cam[:, 2]
             # per corner bool mask, normalize & check visibility
             in_bounds = (u >= 0) & (u <= 640) & (v >= 0) & (v <= 360)
             
@@ -141,7 +146,7 @@ def test_model(
                 if vision_weights:
                     results = vis_model(frame, device=("cuda" if torch.cuda.is_available() else "cpu"))
                     out.write(results[0].plot())
-                elif build_dataset and ep_len % 50 == 0:
+                elif build_dataset and ep_len % 25 == 0:
                     labels = convert_to_yolo_labels(env)
                     if labels:
                         cv2.imwrite(str(images_dir / f"{dataset_iter}_{n_roll}_{ep_len:010d}.jpg"), frame)

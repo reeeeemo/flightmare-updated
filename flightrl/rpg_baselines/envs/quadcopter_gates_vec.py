@@ -25,7 +25,6 @@ class QuadcopterGatesVec(VecEnv):
             max_memory_space: int = 10000,
             use_cam: bool = False,
             vision_weights: str = "",
-            training: bool = True
          ):
         self.wrapper = impl
 
@@ -91,8 +90,8 @@ class QuadcopterGatesVec(VecEnv):
         ], dtype=np.float32)
         # fx = (360/2) / tan(90/2) = 180 = fy since square pixels
         self.camera_matrix = np.array([
-            [320, 0, 320],
-            [0, 320, 180],
+            [180, 0, 320],
+            [0, 180, 180],
             [0, 0, 1]
         ], dtype=np.float32)
         theta = np.radians(20)
@@ -111,7 +110,6 @@ class QuadcopterGatesVec(VecEnv):
         # curriculum learning vars
         self.ep_successes = deque(maxlen=max_memory_space)
         self.randomize_gates = False
-        self.training = training
         self.n_gates = 1
         self.p_target = 0.85
 
@@ -132,7 +130,7 @@ class QuadcopterGatesVec(VecEnv):
         """
         
         # compute action-based rewards
-        gate_dir = self._full_obs[:, 0:3]
+        gate_dir = self.gt_gate_dir #self._full_obs[:, 0:3]
         ang_vel = self._full_obs[:, 15:18]
 
         # compute normalized gate direction then velocity twrds gate and gate normal
@@ -172,7 +170,7 @@ class QuadcopterGatesVec(VecEnv):
             # idx 0 = left/right offset from gate center
             # idx 1 = distance along the approach axis (forward/backward)
             # idx 2 = up/down offset from gate center
-            local_positions = self.rot_mats[self.cur_gate[i]].T @ self._full_obs[i, 0:3]
+            local_positions = self.rot_mats[self.cur_gate[i]].T @ gate_dir[i]
 
             ### find whether drone has gone through or hit gate
             on_plane = abs(local_positions[1]) < self.gate_depth
@@ -194,7 +192,8 @@ class QuadcopterGatesVec(VecEnv):
             if self.cur_gate[i] >= len(self.gates):
                 self._done[i] = True
             else:
-                self._full_obs[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
+                if not self.pose_model:
+                    self._full_obs[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
 
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
@@ -217,7 +216,7 @@ class QuadcopterGatesVec(VecEnv):
         # update to relative pos between gate and drone
         self.drone_pos = self._drone_obs[:, 0:3].copy()
         cur_gate_idx = self.cur_gate.clip(max=len(self.gates)-1)
-        self._full_obs[:, 0:3] = self.gates[cur_gate_idx] - self.drone_pos
+        self.gt_gate_dir = self.gates[cur_gate_idx] - self.drone_pos
 
         # move other observations
         self._full_obs[:, 12:15] = self._drone_obs[:, 6:9].copy()
@@ -239,7 +238,7 @@ class QuadcopterGatesVec(VecEnv):
         if self.use_cam:
             self._last_imgs = self.wrapper.getRGBImage()
             frames = np.array(self._last_imgs, dtype=np.uint8)
-        
+
         if not self.pose_model:
             # use priviledged learning
             self._full_obs[:, 22:34] = np.concatenate([
@@ -248,6 +247,8 @@ class QuadcopterGatesVec(VecEnv):
                 (center + right - up) - self.drone_pos, # bottom right
                 (center - right - up) - self.drone_pos  # bottom left
             ], axis=1)
+            self._full_obs[:, 0:3] = self.gates[cur_gate_idx] - self.drone_pos
+
         elif frames.size != 0:
             # use onboard camera + vision model if cam can render
             results = self.pose_model(
@@ -260,18 +261,25 @@ class QuadcopterGatesVec(VecEnv):
                 n_det = result.keypoints.xy.shape[0]
                 if n_det == 0:
                     self._full_obs[env_idx, 22:34] = 0
+                    self._full_obs[env_idx, 0:3] = 0
                     continue
                 
                 best = result.boxes.conf.argmax()
                 # TR, BR, BL, TL
-                kp_2d = result.keypoints.xy[best].cpu().numpy()
+                kp_2d = result.keypoints.xy[best].cpu().numpy().astype(np.float32)
                 #print(f"kp: {kp_2d}")
 
                 # translate from 2D object pose to 3D camera local position via PnP
-                success, rot_vec, trans_vec = cv2.solvePnP(
-                    self.object_points, kp_2d[[3, 0, 1, 2]], self.camera_matrix, np.zeros(5),
-                    flags=cv2.SOLVEPNP_ITERATIVE
-                )
+                try:
+                    success, rot_vec, trans_vec = cv2.solvePnP(
+                        self.object_points, 
+                        kp_2d[[3, 0, 1, 2]], 
+                        self.camera_matrix, 
+                        None,
+                        flags=cv2.SOLVEPNP_ITERATIVE 
+                    )
+                except cv2.error:
+                    success = False
                 if success:
                     # transform from 3d camera local pos to drone local pos
                     # first convert points to camera space
@@ -284,7 +292,7 @@ class QuadcopterGatesVec(VecEnv):
                     corners_world = (R_world @ corners_body.T).T
                     
                     self._full_obs[env_idx, 22:34] = corners_world[[1, 0, 2, 3]].flatten()
-                    
+                    self._full_obs[env_idx, 0:3] = corners_world.mean(axis=0)
                     #print(f"rotation vec:\n{rot_vec}")
                     #print(f"trans vec:\n{trans_vec}")
                     #print(f"full obs:\n{self._full_obs[env_idx, 22:34]}")
@@ -301,6 +309,7 @@ class QuadcopterGatesVec(VecEnv):
                     #print(f"expected span at dist: {gt_dist:.2f}: {2*0.75*320 / max(gt_dist, 0.1)}")
                 else:
                     self._full_obs[env_idx, 22:34] = 0
+                    self._full_obs[env_idx, 0:3] = 0
                 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
@@ -491,7 +500,6 @@ class QuadcopterGatesVec(VecEnv):
             self.n_gates = min(self.n_gates+1, 14)
             self.ep_successes.clear()
         n_gates = self.n_gates
-        n_gates_arr = np.arange(n_gates)
 
         # randomize positions / rotations
         positions = np.zeros((n_gates, 3), dtype=np.float32)

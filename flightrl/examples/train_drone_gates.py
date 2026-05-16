@@ -88,7 +88,7 @@ def main():
         cfg["env"]["num_envs"] = 1
         cfg["env"]["num_threads"] = 1
     else:
-        cfg["env"]["num_envs"] = 20 # policy train: 100 since cpu
+        cfg["env"]["num_envs"] = 100
         cfg["env"]["num_threads"] = 1
 
     if args.render:
@@ -108,7 +108,6 @@ def main():
     env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         use_cam=args.camera,
-        training=(not args.render),
         vision_weights=args.wv
     )
     env.randomize_gates = bool(args.r)
@@ -117,7 +116,7 @@ def main():
     configure_random_seed(args.seed, env=env)
 
     # create file for saving stuff, or add gates if rendering
-    if not args.render:
+    if args.train:
         rsg_root = str(Path(__file__).resolve().parent)
         log_dir = rsg_root + '/saved'
         saver = U.ConfigurationSaver(log_dir=log_dir)
@@ -176,6 +175,9 @@ def main():
     reset_timesteps = False
 
     if args.train:
+        if args.render:  # if running vision training
+            env.connectUnity()
+
         if args.weight == "./saved/quadrotor_env.zip":
             env = VecNormalize(env, norm_obs=True, norm_reward=True)
             model = PPO(
@@ -206,13 +208,15 @@ def main():
             model = PPO.load(args.weight, env=env, device="cpu")
 
         model.learn(
-            total_timesteps=int(4e7), #normally 6e7
+            total_timesteps=int(2e7), #normally 1.2e8 for p1, 5e7 for p2, 2e7 for p3
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
             callback=CurriculumCallback()
         )
         model.save(saver.data_dir)
         env.save(saver.data_dir + "/vec_normalize.pkl")
+        if args.render:
+            env.disconnectUnity()
 
     # # Testing mode with a trained weight
     else:
