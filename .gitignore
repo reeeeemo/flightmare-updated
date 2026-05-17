@@ -1,6 +1,7 @@
 # any additional files downloaded during training
 runs/
 datasets/
+**/*.pt
 
 # vscode stuff
 .vscode/
