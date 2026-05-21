@@ -13,6 +13,8 @@ def convert_to_yolo_labels(env):
     
     fx = 180 
     fy = 180
+    img_w = 640
+    img_h = 360
     
     # check each gate is in camera frame then input for label
     yolo_labels = []
@@ -47,28 +49,32 @@ def convert_to_yolo_labels(env):
             in_bounds = (u >= 0) & (u <= 640) & (v >= 0) & (v <= 360)
             
             if np.sum(in_bounds) >= 2:
+                # grab all in bound coordinates, normalize
                 u_vis = u[in_bounds]
                 v_vis = v[in_bounds]
-                w = np.max(u_vis) - np.min(u_vis)
-                h = np.max(v_vis) - np.min(v_vis)
+                x_min, x_max = u_vis.min(), u_vis.max()
+                y_min, y_max = v_vis.min(), v_vis.max()
                 
-                if (w > 20 and h > 20): # not too small
+                w = (x_max - x_min) / img_w
+                h = (y_max - y_min) / img_h
+                cx = (x_min + x_max) / 2 / img_w
+                cy = (y_min + y_max) / 2 / img_h
+
+                # if not below 20 pixels in width / height
+                if (w > 0.03 and h > 0.03):
                     u /= 640
                     v /= 360
-                    cx = (np.max(u[in_bounds]) + np.min(u[in_bounds])) / 2
-                    cy = (np.max(v[in_bounds]) + np.min(v[in_bounds])) / 2
                     # yolo format for pose:
                     # <class> <xc> <yc> <w> <h> 
                     # <kp1_x> <kp1_y> <kp1_vis> <kp2_x> <kp2_y> <kp2_vis> 
                     # <kp3_x> <kp3_y> <kp3_vis> <kp4_x> <kp4_y> <kp4_vis>
-                    temp_str = f"0 {cx} {cy} {w/640} {h/360}"
+                    temp_str = f"0 {cx:.6f} {cy:.6f} {w} {h}"
                     for j in range(len(u)):
                         vis = 2 if in_bounds[j] else 0
                         kp_x = float(u[j]) if in_bounds[j] else 0.0
                         kp_y = float(v[j]) if in_bounds[j] else 0.0
-                        temp_str += f" {kp_x} {kp_y} {vis}"
+                        temp_str += f" {kp_x:.6f} {kp_y:.6f} {vis}"
                     yolo_labels.append(temp_str)
-            
     
     return yolo_labels
 
@@ -135,12 +141,15 @@ def test_model(
             obs, rew, done, infos = env.step(act)
             total_rew += rew
             ep_len += 1
-            
             # capture video output and perform an action based on flags
             if vid:
                 frame = np.array(env.venv.rgb_image[0], dtype=np.uint8)
                 if vision_weights:
-                    results = vis_model(frame, device=("cuda" if torch.cuda.is_available() else "cpu"))
+                    results = vis_model(
+                        frame, 
+                        device=("cuda" if torch.cuda.is_available() else "cpu"),
+                        verbose=False
+                    )
                     out.write(results[0].plot())
                 elif build_dataset and ep_len % 25 == 0:
                     labels = convert_to_yolo_labels(env)

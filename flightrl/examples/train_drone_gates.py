@@ -14,6 +14,7 @@ from stable_baselines3.common.vec_env import VecNormalize
 from rpg_baselines.common.test_model import test_model
 from rpg_baselines.envs.quadcopter_gates_vec import QuadcopterGatesVec
 import rpg_baselines.common.util as U
+from stable_baselines3.common.utils import LinearSchedule
 
 from flightgym import QuadrotorEnv_v1
 
@@ -46,12 +47,26 @@ class CurriculumCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         return True
+    
+# entropy scheduler since determminism would be enhanced through curriculum learning
+# and if large entropy towards the end of training it relies on noise.
+class EntropySchedulerCallback(BaseCallback):
+    """Entropy scheduler that goes from start -> end via 1->0 progress"""
+    def __init__(self, start: float = 0.005, end: float = 0.001, end_fraction: float = 0.9):
+        super().__init__()
+        self.start = start
+        self.end = end
+        self.end_fraction = end_fraction
+        self.schedule = LinearSchedule(start, end, end_fraction)
+
+    def _on_step(self) -> bool:
+        progress = (self.training_env.n_gates - self.training_env.start_gate) / (self.training_env.n_gates_target - self.training_env.start_gate)
+        self.model.ent_coef = self.schedule(progress)
+        return True
 
 def configure_random_seed(seed, env=None):
-    if env is not None:
-        env.seed(seed)
+    env.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
 
 def parser():
     parser = argparse.ArgumentParser()
@@ -74,11 +89,17 @@ def parser():
     parser.add_argument('--r', '--randomize', type=int, default=0,
                         help="randomize gates activated")
     parser.add_argument('--bd', '--build_dataset', type=int, default=0,
-                        help="builds YOLO-style pose dataset")
+                        help="whether to build YOLO-style pose dataset")
+    parser.add_argument('--p', '--phase', type=int, default=1,
+                        help="what phase of drone training (1, 2)")
+    parser.add_argument('--rt', '--reset_timesteps', type=int, default=0,
+                        help="whether to reset timesteps for a model or not")
     return parser
 
 def main():
     args = parser().parse_args()
+    if (args.p not in (1, 2, 3)):
+        raise ValueError("Phases (1, 2, 3) are only available to run.")
 
     # set yaml for quadcopter environments
     yaml = YAML()
@@ -108,7 +129,9 @@ def main():
     env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         use_cam=args.camera,
-        vision_weights=args.wv
+        vision_weights=args.wv,
+        phase=args.p,
+        init_gate_num=10
     )
     env.randomize_gates = bool(args.r)
 
@@ -122,8 +145,8 @@ def main():
         saver = U.ConfigurationSaver(log_dir=log_dir)
 
     # add gates to environment
-    if args.r and args.render:
-        n_gates = np.random.randint(6, 11)
+    if args.r:
+        n_gates = np.random.randint(6, 14)
         n_gates_arr = np.arange(n_gates)
 
         # randomize positions / rotations
@@ -135,20 +158,23 @@ def main():
             old_pos_z = positions[i-1, 2] if i-1 >= 0 else 5
             prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
             #-5, 5 for p1, -12 12 for p2
-            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(-12, 12)
+            random_x_range = (-5, 5) if args.p == 1 else (-12, 12)
+            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(*random_x_range)
             #6-7 p1, 8-10 p2
-            positions[i, 1] = old_pos_y + np.random.uniform(8,10) # y always close but not intersecting/too close
+            random_y_range = (6, 7) if args.p == 1 else (8, 10)
+            positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range) # y always close but not intersecting/too close
             positions[i, 2] = np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 5.0, np.inf)
             
             # new rot based on approach angle from cur gate + noise
             approach_dx = positions[i, 0] - old_pos_x
             approach_dy = positions[i, 1] - old_pos_y
-            new_yaw = np.arctan2(approach_dx, approach_dy) + np.random.uniform(-np.pi/4, np.pi/4)
-            new_yaw = np.clip(new_yaw, -np.pi/4, np.pi/4)
+            random_yaw_range = (-np.pi/6, np.pi/6)
+            new_yaw = np.arctan2(-approach_dx, approach_dy) + np.random.uniform(*random_yaw_range)
+            new_yaw = np.clip(new_yaw, -np.pi/6, np.pi/6)
             half = new_yaw / 2
             
-            rotations[i, 0] = 1 #np.cos(half)
-            rotations[i, 3] = 0 #np.sin(half)        
+            rotations[i, 0] = 1 if args.p == 1 else np.cos(half)
+            rotations[i, 3] = 0 if args.p == 1 else np.sin(half)        
     else:
         positions = np.array([
             [0, 7.5, 7],
@@ -175,9 +201,6 @@ def main():
     reset_timesteps = False
 
     if args.train:
-        if args.render:  # if running vision training
-            env.connectUnity()
-
         if args.weight == "./saved/quadrotor_env.zip":
             env = VecNormalize(env, norm_obs=True, norm_reward=True)
             model = PPO(
@@ -189,7 +212,7 @@ def main():
                 gae_lambda=0.95,
                 gamma=0.999,  # 0.999
                 n_steps=2048,
-                ent_coef=0.001,
+                ent_coef=0.005,
                 learning_rate=1e-4,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
@@ -207,11 +230,13 @@ def main():
                 env = VecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
 
+        total_timesteps = 8e7 if args.p in (1, 2) else 4e7
+        starting_entropy = 0.005 if args.p == 1 else 0.001
         model.learn(
-            total_timesteps=int(2e7), #normally 1.2e8 for p1, 5e7 for p2, 2e7 for p3
+            total_timesteps=int(total_timesteps), 
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
-            callback=CurriculumCallback()
+            callback=[CurriculumCallback(), EntropySchedulerCallback(start=starting_entropy)]
         )
         model.save(saver.data_dir)
         env.save(saver.data_dir + "/vec_normalize.pkl")
