@@ -31,6 +31,12 @@ def convert_to_yolo_labels(env):
             (center + right - up) - drone_pos,  # BR
             (center - right - up) - drone_pos  # BL
         ], axis=0)
+        p_world_ex = np.stack([
+            (center - right + up),  # TL
+            (center + right + up),  # TR
+            (center + right - up),  # BR
+            (center - right - up)  # BL
+        ], axis=0)
 
         # world pos relative to drone -> drone local position
         R_world = env.venv._full_obs[0, 3:12].reshape(3, 3)

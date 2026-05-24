@@ -94,6 +94,8 @@ def parser():
                         help="what phase of drone training (1, 2)")
     parser.add_argument('--rt', '--reset_timesteps', type=int, default=0,
                         help="whether to reset timesteps for a model or not")
+    parser.add_argument('--ct', '--crash_detection', type=int, default=0,
+                        help="whether to use crash detection or not")
     return parser
 
 def main():
@@ -131,7 +133,8 @@ def main():
         use_cam=args.camera,
         vision_weights=args.wv,
         phase=args.p,
-        init_gate_num=10
+        init_gate_num=12,
+        crash_det=args.ct
     )
     env.randomize_gates = bool(args.r)
 
@@ -250,7 +253,7 @@ def main():
         model = PPO.load(args.weight, env=env, device="cpu")
         test_model(
             env, model, 
-            num_rollouts=1,
+            num_rollouts=3,
             render=args.render, 
             weight_path=args.weight, 
             vid=args.camera, 

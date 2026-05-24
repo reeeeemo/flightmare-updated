@@ -30,7 +30,7 @@ class StaticObject {
  protected:
   Vector<3> position_{0.0, 0.0, 0.0};
   Quaternion quat_{1.0, 0.0, 0.0, 0.0};
-  Vector<3> size_{2.0, 1.0, 2.0};
+  Vector<3> size_{1.0, 1.0, 1.0}; // b4: 2.0, 1.0, 2.0s
 };
 
 }  // namespace flightlib

@@ -27,7 +27,8 @@ class QuadcopterGatesVec(VecEnv):
             vision_weights: str = "",
             phase: int = 1,
             init_gate_num: int = 1,
-            target_gate_num: int = 14
+            target_gate_num: int = 14,
+            crash_det: bool = False
          ):
         self.wrapper = impl
 
@@ -110,6 +111,7 @@ class QuadcopterGatesVec(VecEnv):
         self.rot_mats = np.zeros((0, 3, 3), dtype=np.float32)
         self.cur_gate = np.zeros(self.num_envs, dtype=int)
         self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
+        self.crash_det = crash_det
 
         # curriculum learning vars
         self.ep_successes = deque(maxlen=max_memory_space)
@@ -119,8 +121,8 @@ class QuadcopterGatesVec(VecEnv):
         self.n_gates_target = target_gate_num
         self.p_target = 0.85
         self.phase = phase
-        self.injection_rate = 0.75
-        self.training_seeds = [1, 20, 40, 0, 3, 6, 9]
+        self.injection_rate = 0.9
+        self.training_seeds = [1, 20, 40, 0, 3, 6, 9, 7]
 
         self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
         self._last_imgs = np.zeros((self.num_envs, 640, 360, 3), dtype=np.float32)
@@ -182,14 +184,18 @@ class QuadcopterGatesVec(VecEnv):
             local_positions = self.rot_mats[self.cur_gate[i]].T @ gate_dir[i]
 
             ### find whether drone has gone through or hit gate
-            on_plane = abs(local_positions[1]) < self.gate_depth
+            #on_plane = abs(local_positions[1]) < self.gate_depth
+            on_plane = 0 <= local_positions[1] < self.gate_depth
             in_opening = (
                 abs(local_positions[0]) < self.half_w 
                 and abs(local_positions[2]) < self.half_h
             )
 
             if on_plane and not in_opening:  # crash into frame
-                self._reward[i] -= 0.5
+                if self.crash_det:
+                    self._done[i] = True
+                else:
+                    self._reward[i] -= 0.5
             elif on_plane and in_opening:  # went through frame
                 self._reward[i] += 10
                 self._reward[i] += self.offset_coef * (1.0 - (local_positions[0]/self.half_w)**2 - (local_positions[2]/self.half_h)**2)
@@ -253,8 +259,7 @@ class QuadcopterGatesVec(VecEnv):
             add_noise = np.random.uniform(0, 1) < self.injection_rate
             noise = np.zeros(12)
             if self.phase == 3 and add_noise:
-                noise_xyz = np.random.uniform(-0.5, 0.5, 3)
-                noise = np.tile(noise_xyz, 4)
+                noise = np.random.uniform(-0.5, 0.5, size=(12,))
 
             self._full_obs[:, 22:34] = np.concatenate([
                 (center + right + up) - self.drone_pos, # top right
@@ -290,21 +295,30 @@ class QuadcopterGatesVec(VecEnv):
                     self._full_obs[env_idx, 0:3] = 0
                     continue
                 
-                best = result.boxes.conf.argmax()
-                # TR, BR, BL, TL
-                kp_2d = result.keypoints.xy[best].cpu().numpy().astype(np.float32)
+                best_3 = (result.boxes.xywh[:, 2] * result.boxes.xywh[:, 3]).argsort(descending=True)[:3]
+                success = False
+                for best in best_3:
+                    # TR, BR, BL, TL
+                    kp_2d = result.keypoints.xy[best].cpu().numpy().astype(np.float32)
 
-                # translate from 2D object pose to 3D camera local position via PnP
-                try:
-                    success, rot_vec, trans_vec = cv2.solvePnP(
-                        self.object_points, 
-                        kp_2d[[3, 0, 1, 2]], 
-                        self.camera_matrix, 
-                        None,
-                        flags=cv2.SOLVEPNP_ITERATIVE 
-                    )
-                except cv2.error:
-                    success = False
+                    # translate from 2D object pose to 3D camera local position via PnP
+                    try:
+                        success, rot_vec, trans_vec = cv2.solvePnP(
+                            self.object_points, 
+                            kp_2d[[3, 0, 1, 2]], 
+                            self.camera_matrix, 
+                            None,
+                            flags=cv2.SOLVEPNP_ITERATIVE 
+                        )
+                    except cv2.error:
+                        continue
+
+                    # check for detection being in front of drone
+                    if trans_vec[2] <= 0:
+                        success = False
+                        continue
+                    elif success:
+                        break
                 if success:
                     # transform from 3d camera local pos to drone local pos
                     # first convert points to camera space
@@ -316,14 +330,8 @@ class QuadcopterGatesVec(VecEnv):
                     R_world = self._full_obs[env_idx, 3:12].reshape(3, 3)
                     corners_world = (R_world @ corners_body.T).T
                     
-                    # if forward vector is 
-                    print(trans_vec[2])
-                    if trans_vec[2] < 2:
-                        self._full_obs[env_idx, 22:34] = 0
-                        self._full_obs[env_idx, 0:3] = 0
-                    else:
-                        self._full_obs[env_idx, 22:34] = corners_world[[1, 0, 2, 3]].flatten()
-                        self._full_obs[env_idx, 0:3] = corners_world.mean(axis=0)
+                    self._full_obs[env_idx, 22:34] = corners_world[[1, 0, 2, 3]].flatten()
+                    self._full_obs[env_idx, 0:3] = corners_world.mean(axis=0)
                 else:
                     self._full_obs[env_idx, 22:34] = 0
                     self._full_obs[env_idx, 0:3] = 0
