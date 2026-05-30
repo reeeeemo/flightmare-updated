@@ -60,8 +60,8 @@ class EntropySchedulerCallback(BaseCallback):
         self.schedule = LinearSchedule(start, end, end_fraction)
 
     def _on_step(self) -> bool:
-        progress = (self.training_env.n_gates - self.training_env.start_gate) / (self.training_env.n_gates_target - self.training_env.start_gate)
-        self.model.ent_coef = self.schedule(progress)
+        progress = (self.training_env.n_gates - self.training_env.start_gate) / max(1, (self.training_env.n_gates_target - self.training_env.start_gate))
+        self.model.ent_coef = self.schedule(1-progress)
         return True
 
 def configure_random_seed(seed, env=None):
@@ -128,12 +128,14 @@ def main():
     yaml.dump(cfg, stream)
 
     # flies through gates
+    # init gates is 1 for p1, but for p2 and p3 it should be learning gate geometry
+    # not single gate behaviors
     env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         use_cam=args.camera,
         vision_weights=args.wv,
         phase=args.p,
-        init_gate_num=12,
+        init_gate_num=1,
         crash_det=args.ct
     )
     env.randomize_gates = bool(args.r)
@@ -215,7 +217,7 @@ def main():
                 gae_lambda=0.95,
                 gamma=0.999,  # 0.999
                 n_steps=2048,
-                ent_coef=0.005,
+                ent_coef=0.003,
                 learning_rate=1e-4,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
@@ -233,13 +235,16 @@ def main():
                 env = VecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
 
-        total_timesteps = 8e7 if args.p in (1, 2) else 4e7
-        starting_entropy = 0.005 if args.p == 1 else 0.001
+        total_timesteps = 1.6e8 if args.p in (1, 2) else 8e7  # 8e7 and 4e7 usually
+        starting_entropy = 0.005 #if args.p == 1 else 0.001
         model.learn(
             total_timesteps=int(total_timesteps), 
             progress_bar=False,
             reset_num_timesteps=reset_timesteps,
-            callback=[CurriculumCallback(), EntropySchedulerCallback(start=starting_entropy)]
+            callback=[
+                CurriculumCallback(), 
+                #EntropySchedulerCallback(start=starting_entropy, end=0.001)
+            ]
         )
         model.save(saver.data_dir)
         env.save(saver.data_dir + "/vec_normalize.pkl")
