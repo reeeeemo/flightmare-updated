@@ -135,7 +135,7 @@ def main():
         use_cam=args.camera,
         vision_weights=args.wv,
         phase=args.p,
-        init_gate_num=1,
+        init_gate_num=1, #if args.p == 1 else 8,
         crash_det=args.ct
     )
     env.randomize_gates = bool(args.r)
@@ -235,7 +235,7 @@ def main():
                 env = VecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
 
-        total_timesteps = 1.6e8 if args.p in (1, 2) else 8e7  # 8e7 and 4e7 usually
+        total_timesteps = 1.6e8 if args.p in (1, 2) else 8e7
         starting_entropy = 0.005 #if args.p == 1 else 0.001
         model.learn(
             total_timesteps=int(total_timesteps), 
@@ -243,7 +243,7 @@ def main():
             reset_num_timesteps=reset_timesteps,
             callback=[
                 CurriculumCallback(), 
-                #EntropySchedulerCallback(start=starting_entropy, end=0.001)
+                EntropySchedulerCallback(start=starting_entropy, end=0.001)
             ]
         )
         model.save(saver.data_dir)

@@ -5,7 +5,6 @@ from collections import deque
 import cv2
 from ultralytics import YOLO
 import torch
-import math
 
 class QuadcopterGatesVec(VecEnv):
     """Custom Gymnasium environment that simulates a drone flying through gates
@@ -47,7 +46,6 @@ class QuadcopterGatesVec(VecEnv):
         # [roll, pitch, yaw vel]
         # [previous_thrust, prev_pitch, prev_yaw, prev_roll]
         # [gate_corner_x, gate_corner_y, gate_corner_z] x 4
-        # [x_to_2nd_near_gate, y_to_2nd_near_gate, z_to_2nd_near_gate]
         self._observation_space = spaces.Box(
             np.ones(self.num_full_obs) * -np.inf,
             np.ones(self.num_full_obs) * np.inf, dtype=np.float32)
@@ -71,11 +69,12 @@ class QuadcopterGatesVec(VecEnv):
                                     len(self._extraInfoNames)], dtype=np.float32)
 
         # reward coefficients
-        self.lin_vel_coef = 1 # was 1
-        self.ang_vel_coef = -0.001  # instead of -0.001
-        self.act_coef = -0.001 # -0.005
-        self.offset_coef = 2 # prev: 6
-        self.perception_coef = -0.05  # -0.05
+        self.lin_vel_coef = 1
+        self.ang_vel_coef = -0.001
+        self.act_coef = -0.001
+        self.offset_coef = 2
+        self.perception_coef = -0.05
+        self.next_gate_vel_coef = 0 # 0.005 # 0.01 og worked
 
         # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
         self.half_w = 0.75 # half of inner width
@@ -84,6 +83,7 @@ class QuadcopterGatesVec(VecEnv):
         self.v_max = 99
         self.sim_dt = 0.00833333333 # 0.02 # 0.00833333333
         self.camera_penalty = np.zeros((self.num_envs), dtype=np.float32)
+        self.next_camera_penalty = np.zeros((self.num_envs), dtype=np.float32)
 
         # camera vars
         self.use_cam = use_cam
@@ -93,7 +93,7 @@ class QuadcopterGatesVec(VecEnv):
             [-0.75, 0.75, 0], # top left
             [0.75, 0.75, 0], # top right
             [0.75, -0.75, 0], # bottom right
-            [-0.75, -0.75, 0] # bottom keft
+            [-0.75, -0.75, 0] # bottom left
         ], dtype=np.float32)
         # fx = (360/2) / tan(90/2) = 180 = fy since square pixels
         self.camera_matrix = np.array([
@@ -121,8 +121,7 @@ class QuadcopterGatesVec(VecEnv):
         self.n_gates = init_gate_num
         self.start_gate = init_gate_num
         self.n_gates_target = target_gate_num
-        #self.p_target = 0.85
-        self.p_target = 0.65
+        self.p_target = 0.85
         self.phase = phase
         self.injection_rate = 0.75
         self.training_seeds = [1, 20, 40, 0, 3, 6, 9, 7]
@@ -165,12 +164,30 @@ class QuadcopterGatesVec(VecEnv):
 
         # prevent instantaneous switching of motors to high/low rpms ("bang bang" motion)
         excess_change = np.maximum(0.0, np.abs(self._prev_action - action) - 0.3)
+        
+        # give a small reward dependent on linear velocity towards next gate (not cur)
+        prev_gate_idx = np.maximum(self.cur_gate-1, 0).clip(max=len(self.gates)-1)
+        cur_gate_idx = self.cur_gate.clip(max=len(self.gates)-1)
 
+        gate_spacing = np.linalg.norm(self.gates[prev_gate_idx] - self.gates[cur_gate_idx], axis=1)
+        scale = np.where((self.cur_gate > 0), gate_dist.squeeze() / gate_spacing.clip(min=1e-6), 0.0)
+        too_close = (gate_dist.squeeze() > self.gate_depth).astype(float)
+        
+        d_next_body = self._full_obs[:, 34:37] / np.linalg.norm(self._full_obs[:, 34:37], axis=1, keepdims=True).clip(min=1e-6)
+        v_body = np.einsum('nji,nj->ni', self._full_obs[:, 3:12].reshape(self.num_envs, 3, 3), self._full_obs[:, 12:15])
+        vel_towards_nxt = np.maximum(0, np.sum(v_body * d_next_body, axis=1)) * scale * too_close
+
+        # track camera penalty dependent on next gate (not cur)
+        nxt_gate_dir_norm = self.gt_nxt_gate_dir / np.linalg.norm(self.gt_nxt_gate_dir, axis=1, keepdims=True).clip(min=1e-6)
+        nxt_cam_dev = np.sum(nxt_gate_dir_norm * cam_forward, axis=1)
+        self.next_camera_penalty = np.maximum(0.0, np.cos(np.radians(60)) - nxt_cam_dev)
+        
         step_rew = (
             self.lin_vel_coef * progress +
             self.ang_vel_coef * np.sum(ang_vel**2, axis=1) +  # small penalty towards unstable angular vel
             self.act_coef * np.sum(excess_change, axis=1) +
-            self.perception_coef * self.camera_penalty # penalty for not being in the orientation of the gate
+            self.perception_coef * self.camera_penalty + # penalty for not being in the orientation of the gate
+            self.next_gate_vel_coef * vel_towards_nxt
         ).astype(np.float32)
 
         self._reward = np.where(self._done, self._reward, step_rew)
@@ -202,21 +219,19 @@ class QuadcopterGatesVec(VecEnv):
             elif on_plane and in_opening:  # went through frame
                 self._reward[i] += 10
                 self._reward[i] += self.offset_coef * (1.0 - (local_positions[0]/self.half_w)**2 - (local_positions[2]/self.half_h)**2)
-                
-                # update gates and prev gate direction
                 self.cur_gate[i] += 1
                 if self.cur_gate[i] < len(self.gates):
                     self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
-            
+
             if self.cur_gate[i] >= len(self.gates):
                 self._done[i] = True
             else:
                 if not self.pose_model:
                     self._full_obs[i, 0:3] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
                     if ((self.cur_gate[i]+1) <= (len(self.gates) - 1)):
-                        self._full_obs[i, 34:37] = self.gates[self.cur_gate[i]+1] - self.gates[self.cur_gate[i]]
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ (self.gates[self.cur_gate[i]+1] - self.drone_pos[i])
                     else:
-                        self._full_obs[i, 34:37] = self._full_obs[i, 0:3]
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ self._full_obs[i, 0:3]
 
             # if done, give a time-based bonus
             if self._done[i] and self.cur_gate[i] >= len(self.gates):
@@ -236,10 +251,16 @@ class QuadcopterGatesVec(VecEnv):
 
     def _update_observation(self):
         """Updates observations recieved from C++ wrapper."""
-        # update to relative pos between gate and drone
         self.drone_pos = self._drone_obs[:, 0:3].copy()
+        
+        # update to relative pos between gate and drone
         cur_gate_idx = self.cur_gate.clip(max=len(self.gates)-1)
         self.gt_gate_dir = self.gates[cur_gate_idx] - self.drone_pos
+        
+        # get next gate (x,y,z) for all 4 corners if it exists, if not zero them out
+        next_gate_available = ((cur_gate_idx+1) <= (len(self.gates) - 1))
+        nxt_gate_idx = np.clip(cur_gate_idx+1, 0, len(self.gates)-1)
+        self.gt_nxt_gate_dir = self.gates[nxt_gate_idx] - self.drone_pos
         
         # move other observations
         self._full_obs[:, 12:15] = self._drone_obs[:, 6:9].copy()
@@ -257,11 +278,6 @@ class QuadcopterGatesVec(VecEnv):
         right = self.rot_mats[cur_gate_idx, :, 0] * self.half_w
         up = self.rot_mats[cur_gate_idx, :, 2] * self.half_h
         
-        # get next gate (x,y,z) for all 4 corners if it exists, if not zero them out
-        next_gate_available = ((cur_gate_idx+1) <= (len(self.gates) - 1))
-        nxt_gate_idx = np.clip(cur_gate_idx+1, 0, len(self.gates)-1)
-        
-        
         # get images from camera if using
         if self.use_cam:
             self._last_imgs = self.wrapper.getRGBImage()
@@ -271,10 +287,10 @@ class QuadcopterGatesVec(VecEnv):
             ### noise training if requested else priviledged learning ###
             add_noise = np.random.uniform(0, 1) < self.injection_rate
             noise = np.zeros(12)
-            next_noise = np.zeros(12)
+            nxt_noise = np.zeros(12)
             if self.phase == 3 and add_noise:
                 noise = np.random.uniform(-0.5, 0.5, size=(self.num_envs, 12))
-                next_noise = np.random.uniform(-0.5, 0.5, size=(self.num_envs, 12))
+                nxt_noise = np.random.uniform(-0.5, 0.5, size=(self.num_envs, 12))
 
             self._full_obs[:, 22:34] = np.concatenate([
                 (center + right + up) - self.drone_pos, # top right
@@ -288,28 +304,37 @@ class QuadcopterGatesVec(VecEnv):
             nxt_up = self.rot_mats[nxt_gate_idx, :, 2] * self.half_h
                 
             next_gate_corners = np.concatenate([
-                (nxt_center + nxt_right + nxt_up) - center, # top right
-                (nxt_center - nxt_right + nxt_up) - center, # top left
-                (nxt_center + nxt_right - nxt_up) - center, # bottom right
-                (nxt_center - nxt_right - nxt_up) - center  # bottom left
+                (nxt_center + nxt_right + nxt_up) - self.drone_pos, # top right
+                (nxt_center - nxt_right + nxt_up) - self.drone_pos, # top left
+                (nxt_center + nxt_right - nxt_up) - self.drone_pos, # bottom right
+                (nxt_center - nxt_right - nxt_up) - self.drone_pos  # bottom left
             ], axis=1)
-            next_gate_corners += next_noise
+            next_gate_corners += nxt_noise
             
             # add noise to gate distance if noise training
             if self.phase != 3 or not add_noise:
                 self._full_obs[:, 0:3] = self.gates[cur_gate_idx] - self.drone_pos
-                self._full_obs[~next_gate_available, 34:37] = self._full_obs[~next_gate_available, 0:3]
-                self._full_obs[next_gate_available, 34:37] = (self.gates[nxt_gate_idx] - self.gates[cur_gate_idx])[next_gate_available]
+                for i in range(self.num_envs):
+                    if next_gate_available[i]:
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ (self.gates[nxt_gate_idx[i]] - self.drone_pos[i])
+                    else:
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ self._full_obs[i, 0:3]
             else:
-                self._full_obs[:, 0:3] = self._full_obs[:, 22:34].reshape(self.num_envs, 4, 3).mean(axis=1)
-                self._full_obs[~next_gate_available, 34:37] = self._full_obs[~next_gate_available, 0:3]
-                self._full_obs[next_gate_available, 34:37] = (next_gate_corners.reshape(self.num_envs, 4, 3).mean(axis=1))[next_gate_available]
+                tmp_gate_dir = self._full_obs[:, 22:34].reshape(self.num_envs, 4, 3).mean(axis=1)
+                far_enough = np.linalg.norm(tmp_gate_dir, axis=1) > 2
+                self._full_obs[far_enough, 0:3] = tmp_gate_dir[far_enough]
+    
+                for i in range(self.num_envs):
+                    if next_gate_available[i]:
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ next_gate_corners[i].reshape(4, 3).mean(axis=0)
+                    else:
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ self._full_obs[i, 0:3]
 
             # if camera is deviating from current gate zero everything out to mimic camera inference
             if self.phase == 3:
                 self._full_obs[(self.camera_penalty > 0), 22:34] = np.zeros(12)
                 self._full_obs[(self.camera_penalty > 0), 0:3] = np.zeros(3)
-                self._full_obs[(self.camera_penalty > 0), 34:37] = np.zeros(3) # ik this is facing next gate idc rn tho
+                self._full_obs[(self.next_camera_penalty > 0), 34:37] = np.zeros(3)
 
         elif frames.size != 0:
             # use onboard camera + vision model if cam can render
@@ -347,7 +372,7 @@ class QuadcopterGatesVec(VecEnv):
                         continue
 
                     # check for detection being in front of drone
-                    if trans_vec[2] <= 0:
+                    if trans_vec[2] <= 2:
                         success = False
                         continue
                     elif success:
@@ -364,11 +389,11 @@ class QuadcopterGatesVec(VecEnv):
                         # on success set cur and next gate to same val, if already done set next gate to new
                         if not cur_success:
                             self._full_obs[env_idx, 22:34] = corners_world[[1, 0, 2, 3]].flatten()
-                            self._full_obs[env_idx, 0:3] = corners_world.mean(axis=0) 
-                            self._full_obs[env_idx, 34:37] = corners_world.mean(axis=0)
-                            cur_success = True
+                            self._full_obs[env_idx, 0:3] = corners_world.mean(axis=0)
+                            self._full_obs[env_idx, 34:37] = 0 
+                            cur_success=True
                         else:
-                            self._full_obs[env_idx, 34:37] = 0 #corners_world.mean(axis=0)
+                            self._full_obs[env_idx, 34:37] = R_world.T @ corners_world.mean(axis=0)
                 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
@@ -402,8 +427,8 @@ class QuadcopterGatesVec(VecEnv):
             if self._done[i]:
                 eplen = len(self.rewards[i])
                 eprew = sum(self.rewards[i])
-                #self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
-                self.ep_successes.append(self.cur_gate[i] / len(self.gates))
+                self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
+                #self.ep_successes.append(self.cur_gate[i] / len(self.gates))
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
@@ -448,7 +473,6 @@ class QuadcopterGatesVec(VecEnv):
         # lin velocity is randomized from 0-1 too
         self.wrapper.reset(self._drone_obs)
 
-        # select closest gate to drones starting point to use
         self._prev_gate_dir = self.gates[self.cur_gate] - self._drone_obs[:, 0:3]
         
         self._update_observation()
@@ -553,11 +577,10 @@ class QuadcopterGatesVec(VecEnv):
         # anyhting under p^5 (>0.45) overfits since completion % is so high, causing std degradation
         # anything over p^5 (<0.45) struggles with small sample sizes, cannot hit 45% course completion
         # ^^ note that 45% course completion for p^11 = 0.93% per gate accuracy :p
-        #threshold = min(0.45, self.p_target**self.n_gates)
-        #if success_rate >= threshold:
-        if success_rate >= self.p_target:
-            #self.n_gates = min(self.n_gates+1, self.n_gates_target)
-            self.n_gates = min(math.ceil(self.n_gates * 1.5), self.n_gates_target)
+        threshold = min(0.45, self.p_target**self.n_gates)
+        if success_rate >= threshold:
+            self.n_gates = min(self.n_gates+1, self.n_gates_target)
+            #self.n_gates = min(math.ceil(self.n_gates * 1.5), self.n_gates_target)
             self.ep_successes.clear()
         n_gates = self.n_gates
         
