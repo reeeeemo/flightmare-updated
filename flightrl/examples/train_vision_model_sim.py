@@ -15,6 +15,8 @@ def parser():
                         help="vision model weights to train/fine tune on")
     parser.add_argument('--dataset', type=str, default="",
                         help="dataset YAML to train model on")
+    parser.add_argument('--freeze', type=int, default=0,
+                        help="whether to freeze backbone")
     return parser
 
 def main():
@@ -25,8 +27,8 @@ def main():
         data=args.dataset,
         epochs=200,
         patience=20,
-        imgsz=384,
-        freeze=10, # locks backbone
+        imgsz=640,
+        freeze=10 if args.freeze else 0, # locks backbone
         lr0=0.001,
         device=("cuda" if torch.cuda.is_available() else "cpu")
     )

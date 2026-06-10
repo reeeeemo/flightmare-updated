@@ -32,7 +32,9 @@ class QuadcopterGatesVec(VecEnv):
          ):
         self.wrapper = impl
 
-        # get observations and actions # from wrapper and add others
+        # ------------------------------------
+        # PPO OBS / ACTION VARIABLES
+        # ------------------------------------
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 25
         self.num_acts = self.wrapper.getActDim()
@@ -46,6 +48,7 @@ class QuadcopterGatesVec(VecEnv):
         # [roll, pitch, yaw vel]
         # [previous_thrust, prev_pitch, prev_yaw, prev_roll]
         # [gate_corner_x, gate_corner_y, gate_corner_z] x 4
+        # [x_to_2nd_gate_rotmat, y_to_2nd_gate_rotmat, z_to_2nd_gate_rotmat]
         self._observation_space = spaces.Box(
             np.ones(self.num_full_obs) * -np.inf,
             np.ones(self.num_full_obs) * np.inf, dtype=np.float32)
@@ -56,6 +59,9 @@ class QuadcopterGatesVec(VecEnv):
             high=np.ones(self.num_acts) * 1.,
             dtype=np.float32)
         
+        # ------------------------------------
+        # PPO REWARD VARIABLES
+        # ------------------------------------
         # numpy array of all drone obs, rews since multi environments
         self._drone_obs = np.zeros([self.num_envs, self.num_drone_obs], dtype=np.float32)
         self._full_obs = np.zeros([self.num_envs, self.num_full_obs], dtype=np.float32)
@@ -68,7 +74,9 @@ class QuadcopterGatesVec(VecEnv):
         self._extraInfo = np.zeros([self.num_envs,
                                     len(self._extraInfoNames)], dtype=np.float32)
 
-        # reward coefficients
+        # ------------------------------------
+        # REWARD COEFFICIENTS
+        # ------------------------------------
         self.lin_vel_coef = 1
         self.ang_vel_coef = -0.001
         self.act_coef = -0.001
@@ -76,31 +84,40 @@ class QuadcopterGatesVec(VecEnv):
         self.perception_coef = -0.05
         self.next_gate_vel_coef = 0 # 0.005 # 0.01 og worked
 
-        # gate metrics (unity model is 100x100x100, so 1mx1mx1m)
+        # ------------------------------------
+        # GATE VARIABLES
+        # ------------------------------------
         self.half_w = 0.75 # half of inner width
         self.half_h = 0.75 # half of inner height
         self.gate_depth = 0.26  # depth of gate
         self.v_max = 99
         self.sim_dt = 0.00833333333 # 0.02 # 0.00833333333
+        self.gates = np.zeros((0, 3), dtype=np.float32)
+        self.cur_gate = np.zeros(self.num_envs, dtype=int)
+        self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
+
+        # ------------------------------------
+        # CAMERA VARIABLES
+        # ------------------------------------
         self.camera_penalty = np.zeros((self.num_envs), dtype=np.float32)
         self.next_camera_penalty = np.zeros((self.num_envs), dtype=np.float32)
-
-        # camera vars
         self.use_cam = use_cam
         self.pose_model = YOLO(vision_weights) if vision_weights else None
-        # inner depth is 0.75x0.75
-        self.object_points = np.array([
+
+        self.object_points = np.array([  # inner depth: 0.75x0.75
             [-0.75, 0.75, 0], # top left
             [0.75, 0.75, 0], # top right
             [0.75, -0.75, 0], # bottom right
             [-0.75, -0.75, 0] # bottom left
         ], dtype=np.float32)
+
         # fx = (360/2) / tan(90/2) = 180 = fy since square pixels
         self.camera_matrix = np.array([
             [180, 0, 320],
             [0, 180, 180],
             [0, 0, 1]
         ], dtype=np.float32)
+
         theta = np.radians(20)
         self.R_body_cam = np.array([
             [1, 0, 0],
@@ -108,14 +125,17 @@ class QuadcopterGatesVec(VecEnv):
             [0, -np.cos(theta), np.sin(theta)],
         ])
 
-        # goal gates
-        self.gates = np.zeros((0, 3), dtype=np.float32)
+        # ------------------------------------
+        # ENVIRONMENT VARIABLES
+        # ------------------------------------
         self.rot_mats = np.zeros((0, 3, 3), dtype=np.float32)
-        self.cur_gate = np.zeros(self.num_envs, dtype=int)
         self.drone_pos = np.zeros((self.num_envs, 3), dtype=np.float32)
+        self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
         self.crash_det = crash_det
 
-        # curriculum learning vars
+        # ------------------------------------
+        # CURRICULUM LEARNING VARIABLES
+        # ------------------------------------
         self.ep_successes = deque(maxlen=max_memory_space)
         self.randomize_gates = False
         self.n_gates = init_gate_num
@@ -126,9 +146,20 @@ class QuadcopterGatesVec(VecEnv):
         self.injection_rate = 0.75
         self.training_seeds = [1, 20, 40, 0, 3, 6, 9, 7]
 
-        self._prev_action = np.zeros([self.num_envs, self.num_acts], dtype=np.float32)
         self._last_imgs = np.zeros((self.num_envs, 640, 360, 3), dtype=np.float32)
-        self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
+        
+        # ------------------------------------
+        # CALIBRATION VARIABLES
+        # ------------------------------------
+        #self.dyn_dead = np.random.randint(1, 4, size=self.num_envs)
+        #self.dyn_alpha = np.random.uniform(0.25, 0.75, size=self.num_envs)
+        #self.dyn_gain = np.random.uniform(0.8, 1, size=self.num_envs)
+        self.dyn_dead = np.full(self.num_envs, 2, dtype=int)
+        self.dyn_alpha = np.full(self.num_envs, 0.65)
+        self.dyn_gain = np.full(self.num_envs, 0.895)
+        self._rate_buf = np.zeros((self.num_envs, 4, 3))
+        self._rate_act = np.zeros((self.num_envs, 3))
+        self.omega_max = [15.0, 15.0, 6.0]
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -141,7 +172,6 @@ class QuadcopterGatesVec(VecEnv):
         Returns:
             reward based on drone observation state and current action
         """
-        
         # compute action-based rewards
         gate_dir = self.gt_gate_dir
         ang_vel = self._full_obs[:, 15:18]
@@ -403,16 +433,37 @@ class QuadcopterGatesVec(VecEnv):
         Returns:
             observation, reward, done, env information
         """
-        # values are clamped in c++ code
-        self.wrapper.step(action, self._drone_obs,
-                          self._reward, self._done, self._extraInfo)
-        self._update_observation()
         self._prev_action = action.copy()
+        # ------------------------------------
+        # CALIBRATION GENERALIZATION 
+        # ------------------------------------
+        if self.phase == 3:
+            cmd = action[:, 1:4] * self.omega_max  # policy -> rads/s
+            
+            # selects the cmd at a random delay (1, 2, 3 steps) 
+            self._rate_buf = np.roll(self._rate_buf, 1, axis=1)
+            self._rate_buf[:, 0, :] = cmd
+            delayed = self._rate_buf[
+                np.arange(self.num_envs), self.dyn_dead, :] * self.dyn_gain[:, None]
 
-        # compute reward and if -1 dont adjust, but if 0 we update reward
+            # lag controller that chases the input given over a series of timesteps
+            self._rate_act = (
+                self.dyn_alpha[:, None] * self._rate_act + 
+                (1 - self.dyn_alpha[:, None]) * delayed
+            )
+            action[:, 1:4] = self._rate_act / self.omega_max
+        
+        # ------------------------------------
+        # OBS / REWARD RECIEVED 
+        # ------------------------------------
+        self.wrapper.step(action, self._drone_obs,
+                          self._reward, self._done, self._extraInfo) # step in c++ env
+        self._update_observation()
         self._compute_reward(action)
         
-        # update environments with additional info
+        # ------------------------------------
+        # ADDITIONAL INFO UPDATE FOR ALL ENVS
+        # ------------------------------------
         if len(self._extraInfoNames) != 0:
             info = [{'extra_info': {
                 self._extraInfoNames[j]: self._extraInfo[i, j] for j in range(0, len(self._extraInfoNames))
@@ -420,21 +471,35 @@ class QuadcopterGatesVec(VecEnv):
         else:
             info = [{} for i in range(self.num_envs)]
 
+        # ------------------------------------
+        # UPDATE REWARD / IS DONE INFO
+        # ------------------------------------
         for i in range(self.num_envs):
-            # update reward information if environment is finished
             # update memory to know whether drone crashes (-1 penalty) or not
             self.rewards[i].append(self._reward[i])
             if self._done[i]:
                 eplen = len(self.rewards[i])
                 eprew = sum(self.rewards[i])
                 self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
-                #self.ep_successes.append(self.cur_gate[i] / len(self.gates))
                 epinfo = {"r": eprew, "l": eplen}
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
 
+        # ------------------------------------
+        # RESET COMMANDS FOR MULTI-ENVS
+        # ------------------------------------
+        n = self._done.sum()
         self._prev_action[self._done] = 0
         self.cur_gate[self._done] = 0
+        if self.phase == 3:
+            #self.dyn_dead[self._done] = np.random.randint(1, 4, size=n)
+            #self.dyn_alpha[self._done] = np.random.uniform(0.25, 0.75, size=n)
+            #self.dyn_gain[self._done] = np.random.uniform(0.8, 1, size=n)
+            self.dyn_dead[self._done] = np.full(n, 2, dtype=int)
+            self.dyn_alpha[self._done] = np.full(n, 0.65)
+            self.dyn_gain[self._done] = np.full(n, 0.895)
+            self._rate_buf[self._done] = 0
+            self._rate_act[self._done] = 0
 
         return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
@@ -472,6 +537,16 @@ class QuadcopterGatesVec(VecEnv):
         # spawns anywhere random from 0-1
         # lin velocity is randomized from 0-1 too
         self.wrapper.reset(self._drone_obs)
+        
+        if self.phase == 3:
+            #self.dyn_dead = np.random.randint(1, 4, size=self.num_envs)
+            #self.dyn_alpha = np.random.uniform(0.25, 0.75, size=self.num_envs)
+            #self.dyn_gain = np.random.uniform(0.8, 1, size=self.num_envs)
+            self.dyn_dead = np.full(self.num_envs, 2, dtype=int)
+            self.dyn_alpha = np.full(self.num_envs, 0.65)
+            self.dyn_gain = np.full(self.num_envs, 0.895)
+            self._rate_buf = np.zeros((self.num_envs, 4, 3))
+            self._rate_act = np.zeros((self.num_envs, 3))
 
         self._prev_gate_dir = self.gates[self.cur_gate] - self._drone_obs[:, 0:3]
         

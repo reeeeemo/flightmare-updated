@@ -235,7 +235,7 @@ def main():
                 env = VecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
 
-        total_timesteps = 1.6e8 if args.p in (1, 2) else 8e7
+        total_timesteps = 1.6e8 #if args.p in (1, 2) else 8e7
         starting_entropy = 0.005 #if args.p == 1 else 0.001
         model.learn(
             total_timesteps=int(total_timesteps), 

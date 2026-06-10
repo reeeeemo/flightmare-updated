@@ -68,9 +68,9 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random) {
 
   if (random) {
     // randomly reset the quadrotor state
-    quad_state_.x(QS::POSX) = x_dist(random_gen_); //uniform_dist_(random_gen_);
-    quad_state_.x(QS::POSY) = y_dist(random_gen_); //uniform_dist_(random_gen_);
-    quad_state_.x(QS::POSZ) = z_dist(random_gen_); //uniform_dist_(random_gen_) + 5;
+    quad_state_.x(QS::POSX) = x_dist(random_gen_); 
+    quad_state_.x(QS::POSY) = y_dist(random_gen_); 
+    quad_state_.x(QS::POSZ) = z_dist(random_gen_); 
     if (quad_state_.x(QS::POSZ) < -0.0)
       quad_state_.x(QS::POSZ) = -quad_state_.x(QS::POSZ);
     // reset linear velocity
