@@ -137,6 +137,11 @@ void VecEnv<EnvBase>::increaseRotMult(const Scalar num) {
 }
 
 template<typename EnvBase>
+void VecEnv<EnvBase>::setLowestZ(const Scalar num) {
+  for (int i = 0; i < num_envs_; i++) envs_[i]->setLowestZ(num);
+}
+
+template<typename EnvBase>
 void VecEnv<EnvBase>::decreaseRotMult(const Scalar num) {
   for (int i = 0; i < num_envs_; i++) envs_[i]->decreaseRotMult(num);
 }
@@ -177,9 +182,14 @@ void VecEnv<EnvBase>::perAgentStep(int agent_id, Ref<MatrixRowMajor<>> act,
                                    Ref<MatrixRowMajor<>> obs,
                                    Ref<Vector<>> reward, Ref<BoolVector<>> done,
                                    Ref<MatrixRowMajor<>> extra_info) {
+  if (done(agent_id)) {
+    envs_[agent_id]->reset(obs.row(agent_id));
+    reward(agent_id) = 0;
+    done(agent_id) = false;
+    return;
+  }
   reward(agent_id) =
     envs_[agent_id]->step(act.row(agent_id), obs.row(agent_id));
-
   Scalar terminal_reward = 0;
   done(agent_id) = envs_[agent_id]->isTerminalState(terminal_reward);
 
@@ -189,7 +199,6 @@ void VecEnv<EnvBase>::perAgentStep(int agent_id, Ref<MatrixRowMajor<>> act,
       envs_[agent_id]->extra_info_[extra_info_names_[j]];
 
   if (done[agent_id]) {
-    envs_[agent_id]->reset(obs.row(agent_id));
     reward(agent_id) += terminal_reward;
   }
 }

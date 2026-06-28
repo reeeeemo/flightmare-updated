@@ -40,10 +40,25 @@ from flightgym import QuadrotorEnv_v1
 #   --weight ./saved/quadrotor_env.zip
 #   --norm_weight ./saved/quadrotor_env/vec_normalize.pkl (optional)
 
+class SelectiveVecNormalize(VecNormalize):
+    def __init__(self, venv,
+                 norm_obs=True, 
+                 norm_reward=True,
+                 exclude_indices: list = None, **kwargs
+       ):
+        super().__init__(venv, norm_obs=norm_obs, norm_reward=norm_reward, **kwargs)
+        self.exclude_indices = list(exclude_indices) if exclude_indices else []
+    
+    def normalize_obs(self, obs):
+        normed = super().normalize_obs(obs)
+        normed[:, self.exclude_indices] = obs[:, self.exclude_indices]
+        return normed
+
 class CurriculumCallback(BaseCallback):
     def _on_rollout_start(self) -> None:
         self.training_env.curriculum_callback()
-        self.logger.record("curriculum/randomize_gates", self.training_env.randomize_gates)
+        self.logger.record("curriculum/n_gates", self.training_env.n_gates)
+        self.logger.record("curriculum/inner_depth", self.training_env.half_h)
 
     def _on_step(self) -> bool:
         return True
@@ -67,6 +82,7 @@ class EntropySchedulerCallback(BaseCallback):
 def configure_random_seed(seed, env=None):
     env.seed(seed)
     np.random.seed(seed)
+    torch.manual_seed(seed)
 
 def parser():
     parser = argparse.ArgumentParser()
@@ -136,7 +152,7 @@ def main():
         vision_weights=args.wv,
         phase=args.p,
         init_gate_num=1, #if args.p == 1 else 8,
-        crash_det=args.ct
+        crash_det=args.ct,
     )
     env.randomize_gates = bool(args.r)
 
@@ -157,18 +173,27 @@ def main():
         # randomize positions / rotations
         positions = np.zeros((n_gates, 3), dtype=np.float32)
         rotations = np.zeros((n_gates, 4), dtype=np.float32)
+        flat_probability = [0.8, 0.6, 0.4][args.p-1]
+        lowest_margin = 2.0 + (2.0 * args.p)
         for i in range(n_gates):
             old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
             old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0
-            old_pos_z = positions[i-1, 2] if i-1 >= 0 else 5
+            old_pos_z = positions[i-1, 2] if i-1 >= 0 else 2
             prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
             #-5, 5 for p1, -12 12 for p2
             random_x_range = (-5, 5) if args.p == 1 else (-12, 12)
             positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(*random_x_range)
             #6-7 p1, 8-10 p2
-            random_y_range = (6, 7) if args.p == 1 else (8, 10)
+            random_y_range = [(6, 7), (8, 10), (8, 25)][args.p-1]
+            random_z_range = [(1, 2), (2, 3), (4, 6)][args.p-1]
+
             positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range) # y always close but not intersecting/too close
-            positions[i, 2] = np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 5.0, np.inf)
+            random_z = np.random.uniform(*random_z_range)
+            
+            if np.random.random() < flat_probability:
+                positions[i, 2] = old_pos_z
+            else:
+                positions[i, 2] = np.random.uniform(old_pos_z-random_z, old_pos_z+random_z) #np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 2.0, np.inf)
             
             # new rot based on approach angle from cur gate + noise
             approach_dx = positions[i, 0] - old_pos_x
@@ -179,7 +204,8 @@ def main():
             half = new_yaw / 2
             
             rotations[i, 0] = 1 if args.p == 1 else np.cos(half)
-            rotations[i, 3] = 0 if args.p == 1 else np.sin(half)        
+            rotations[i, 3] = 0 if args.p == 1 else np.sin(half)
+        env.wrapper.setLowestZ(min(min(positions[:, 2]) - lowest_margin, -1.0))
     else:
         positions = np.array([
             [0, 7.5, 7],
@@ -207,7 +233,10 @@ def main():
 
     if args.train:
         if args.weight == "./saved/quadrotor_env.zip":
-            env = VecNormalize(env, norm_obs=True, norm_reward=True)
+            env = SelectiveVecNormalize(env, 
+                                        norm_obs=True, 
+                                        norm_reward=True,
+                                        exclude_indices=[15, 16, 17])
             model = PPO(
                 tensorboard_log=saver.data_dir,
                 policy="MlpPolicy",  # check activation function
@@ -230,13 +259,16 @@ def main():
         else:
             reset_timesteps = "hover" in args.weight  # only reset if we are using hover weights
             if not args.norm_weight:
-                env = VecNormalize(env, norm_obs=True, norm_reward=True)
+                env = SelectiveVecNormalize(env, 
+                                            norm_obs=True, 
+                                            norm_reward=True,
+                                            exclude_indices=[15, 16, 17])
             else:
-                env = VecNormalize.load(args.norm_weight, env)
+                env = SelectiveVecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
 
-        total_timesteps = 1.6e8 #if args.p in (1, 2) else 8e7
-        starting_entropy = 0.005 #if args.p == 1 else 0.001
+        total_timesteps = 1.6e8 #1.6e8 #if args.p in (1, 2) else 8e7
+        starting_entropy = 0.005 #0.005 #if args.p == 1 else 0.001
         model.learn(
             total_timesteps=int(total_timesteps), 
             progress_bar=False,
@@ -253,7 +285,7 @@ def main():
 
     # # Testing mode with a trained weight
     else:
-        env = VecNormalize.load(args.norm_weight, env)
+        env = SelectiveVecNormalize.load(args.norm_weight, env)
         env.training = False
         model = PPO.load(args.weight, env=env, device="cpu")
         test_model(

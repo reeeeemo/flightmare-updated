@@ -41,7 +41,7 @@ def main():
                     for line in f.readlines():
                         values = line.strip().split(' ')
                         xy = [float(val) for val in values[1:]]
-                        pts = [(int(xy[j*2]*w), int(xy[j*2+1]*h)) for j in range(4)]
+                        pts = [(int(xy[j*2]*w), int(xy[j*2+1]*h)) for j in range(len(xy) // 2)]
                         min_x, min_y = min(p[0] for p in pts), min(p[1] for p in pts)
                         max_x, max_y = max(p[0] for p in pts), max(p[1] for p in pts)
                         cv2.rectangle(img, (min_x, min_y), (max_x, max_y), (0, 255, 0), 2)

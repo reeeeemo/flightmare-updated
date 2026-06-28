@@ -45,6 +45,7 @@ class VecEnv {
   void decreaseRotMult(const Scalar num);
   void addRGBCamera();
   void modifyResetPositions(Ref<Vector<>> pos);
+  void setLowestZ(const Scalar num);
 
   // public get functions
   void getObs(Ref<MatrixRowMajor<>> obs);

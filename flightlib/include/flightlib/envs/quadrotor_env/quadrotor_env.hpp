@@ -60,6 +60,7 @@ class QuadrotorEnv final : public EnvBase {
   void decreaseRotMult(const Scalar num);
   void addRGBCamera();
   void modifyResetPositions(Ref<Vector<>> pos);
+  void setLowestZ(const Scalar num);
 
   // - public get functions
   bool getObs(Ref<Vector<>> obs) override;
@@ -92,6 +93,9 @@ class QuadrotorEnv final : public EnvBase {
   std::uniform_real_distribution<Scalar> x_dist{-1.0, 1.0};
   std::uniform_real_distribution<Scalar> y_dist{-1.0, 1.0};
   std::uniform_real_distribution<Scalar> z_dist{-1.0, 1.0};
+
+  // distance from z-axis on terminal state.
+  Scalar lowest_z_dist = 0.02;
 
   // observations and actions (for RL)
   Vector<quadenv::kNObs> quad_obs_;

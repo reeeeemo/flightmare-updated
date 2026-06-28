@@ -23,7 +23,7 @@ QuadrotorEnv::QuadrotorEnv(const std::string &cfg_path)
   quadrotor_ptr_->updateDynamics(dynamics);
 
   // define a bounding box
-  world_box_ << -500, 500, -500, 500, 0, 500;
+  world_box_ << -500, 500, -500, 500, -500, 500; // was 0, 500 for z
   if (!quadrotor_ptr_->setWorldBox(world_box_)) {
     logger_.error("cannot set wolrd box");
   };
@@ -133,7 +133,7 @@ Scalar QuadrotorEnv::step(const Ref<Vector<>> act, Ref<Vector<>> obs) {
 }
 
 bool QuadrotorEnv::isTerminalState(Scalar &reward) {
-  if (quad_state_.x(QS::POSZ) <= 0.02) {
+  if (quad_state_.x(QS::POSZ) <= lowest_z_dist) {
     reward = -10.0;
     return true;
   }
@@ -164,6 +164,10 @@ void QuadrotorEnv::increaseRotMult(const Scalar num) {
 
 void QuadrotorEnv::decreaseRotMult(const Scalar num) {
   rot_mult_ = std::max(rot_mult_ - num, (float)0.0);
+}
+
+void QuadrotorEnv::setLowestZ(const Scalar num) {
+  lowest_z_dist = num;
 }
 
 bool QuadrotorEnv::getAct(Ref<Vector<>> act) const {
