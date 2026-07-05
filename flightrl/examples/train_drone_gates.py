@@ -181,11 +181,11 @@ def main():
             old_pos_z = positions[i-1, 2] if i-1 >= 0 else 2
             prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
             #-5, 5 for p1, -12 12 for p2
-            random_x_range = (-5, 5) if args.p == 1 else (-12, 12)
+            random_x_range = (-5, 5) if args.p == 1 else (-8, 8)
             positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(*random_x_range)
             #6-7 p1, 8-10 p2
             random_y_range = [(6, 7), (8, 10), (8, 25)][args.p-1]
-            random_z_range = [(1, 2), (2, 3), (4, 6)][args.p-1]
+            random_z_range = [(1, 2), (2, 3), (2, 3)][args.p-1]
 
             positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range) # y always close but not intersecting/too close
             random_z = np.random.uniform(*random_z_range)
@@ -267,7 +267,7 @@ def main():
                 env = SelectiveVecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
 
-        total_timesteps = 1.6e8 #1.6e8 #if args.p in (1, 2) else 8e7
+        total_timesteps = 1.6e8 if args.p in (1, 2) else 4.2e8
         starting_entropy = 0.005 #0.005 #if args.p == 1 else 0.001
         model.learn(
             total_timesteps=int(total_timesteps), 

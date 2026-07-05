@@ -40,7 +40,7 @@ class QuadcopterGatesVec(VecEnv):
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 25
         self.num_acts = self.wrapper.getActDim()
-        self.max_episode_steps = 2400
+        self.max_episode_steps = 2400 if phase in (1,2) else 4800
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
@@ -82,7 +82,7 @@ class QuadcopterGatesVec(VecEnv):
         self.lin_vel_coef = 1
         self.ang_vel_coef = -0.001
         self.act_coef = -0.001
-        self.offset_coef = 0
+        self.offset_coef = 1 if phase == 3 else 0
         self.perception_coef = -0.05
         self.next_gate_vel_coef = 0 # does not work -- here just to preserve
 
@@ -320,7 +320,7 @@ class QuadcopterGatesVec(VecEnv):
 
         if not self.vision_model:
             ### noise training if requested else priviledged learning ###
-            add_noise = np.random.uniform(0, 1) < self.injection_rate
+            add_noise = False #np.random.uniform(0, 1) < self.injection_rate
             noise = np.zeros(12)
             nxt_noise = np.zeros(12)
             if self.phase == 3 and add_noise:
@@ -673,54 +673,71 @@ class QuadcopterGatesVec(VecEnv):
         """Set random position and rotations of gates.
         
         Set number of gates and increase if success rate is
-        greater than course completion rate (probability per gate^n_gates).
+        greater than course completion rate (probability_per_gate^n_gates).
         """
+        # ------------------------------------
+        # SUCCESS RATE / N_GATES MANAGER
+        # ------------------------------------
         # anyhting under p^5 (>0.45) overfits since completion % is so high, causing std degradation
         # anything over p^5 (<0.45) struggles with small sample sizes, cannot hit 45% course completion
         # ^^ note that 45% course completion for p^11 = 0.93% per gate accuracy :p
-        threshold = min(0.65, self.p_target**self.n_gates)
+        threshold = min(0.45, self.p_target**self.n_gates)
         if success_rate >= threshold:
             self.n_gates = min(self.n_gates+1, self.n_gates_target)
             self.ep_successes.clear()
         n_gates = self.n_gates
         
+        # ------------------------------------
+        # SEEDING
+        # ------------------------------------
         chosen_seed = np.random.choice(self.training_seeds)
         saved_state = np.random.get_state()
         np.random.seed(chosen_seed)
 
-        # randomize positions / rotations
+        # ------------------------------------
+        # POSITION / ROTATION RANDOMIZATION
+        # ------------------------------------
         positions = np.zeros((n_gates, 3), dtype=np.float32)
         rotations = np.zeros((n_gates, 4), dtype=np.float32)
         for i in range(n_gates):
             old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
             old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0
             old_pos_z = positions[i-1, 2] if i-1 >= 0 else 2
+            
+            # ---------- RANDOM X RANGE ----------
+            # keep x close to old position and smooth so no insane angles drone has to cross
             prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
-            #-5, 5 for p1, -12 12 for p2
-            random_x_range = (-5, 5) if self.phase == 1 else (-12, 12)
+            random_x_range = (-5, 5) if self.phase == 1 else (-8, 8)
             positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(*random_x_range)
-            #6-7 p1, 8-10 p2
+            
+            # ---------- RANDOM Y RANGE ----------
+            # keep y close to old position but not too close.
             random_y_range = [(6, 7), (8, 10), (8, 25)][self.phase-1]
-            random_z_range = [(1, 2), (2, 3), (4, 6)][self.phase-1]
-            positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range) # y always close but not intersecting/too close
+            positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range)
+            
+            # ---------- RANDOM Z RANGE ----------
+            random_z_range = [(1, 2), (2, 3), (2, 3)][self.phase-1]
             random_z = np.random.uniform(*random_z_range)
             
+            # ---------- FLAT PROBABILITY (no z range adjust) ----------
             if np.random.random() < self.flat_probability:
                 positions[i, 2] = old_pos_z
             else:
                 positions[i, 2] = np.random.uniform(old_pos_z-random_z, old_pos_z+random_z) #np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 2.0, np.inf)
             
-            # new rot based on approach angle from cur gate + noise
+            # ---------- RANDOM ROTATION ----------
+            # based on approach angle from current gate so no angle exceeds 45 degrees
+            # only is activated during phases 2 and above.
             approach_dx = positions[i, 0] - old_pos_x
             approach_dy = positions[i, 1] - old_pos_y
             random_yaw_range = (-np.pi/6, np.pi/6)
             new_yaw = np.arctan2(-approach_dx, approach_dy) + np.random.uniform(*random_yaw_range)
             new_yaw = np.clip(new_yaw, -np.pi/6, np.pi/6)
             half = new_yaw / 2
-            
             rotations[i, 0] = 1 if self.phase == 1 else np.cos(half)
             rotations[i, 3] = 0 if self.phase == 1 else np.sin(half)      
             
+        # ---------- C++ WRAPPER CALLBACKS ----------
         self.addGate(positions, rotations)
         np.random.set_state(saved_state)
         self.wrapper.setLowestZ(min(min(self.gates[:, 2]) - self._lowest_z, -1.0))
