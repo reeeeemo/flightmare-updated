@@ -51,7 +51,7 @@ class QuadrotorEnv final : public EnvBase {
   ~QuadrotorEnv();
 
   // - public OpenAI-gym-style functions
-  bool reset(Ref<Vector<>> obs, const bool random = true) override;
+  bool reset(Ref<Vector<>> obs, const bool random = true, const bool domrand = false) override;
   Scalar step(const Ref<Vector<>> act, Ref<Vector<>> obs) override;
 
   // - public set functions
@@ -81,7 +81,10 @@ class QuadrotorEnv final : public EnvBase {
   std::shared_ptr<Quadrotor> quadrotor_ptr_;
   QuadState quad_state_;
   Command cmd_;
-  Logger logger_{"QaudrotorEnv"};
+  Logger logger_{"QuadrotorEnv"};
+
+  // dynamics
+  QuadrotorDynamics dynamics_;
 
   // camera
   std::shared_ptr<RGBCamera> rgb_camera_;

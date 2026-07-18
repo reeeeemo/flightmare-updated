@@ -57,8 +57,15 @@ class SelectiveVecNormalize(VecNormalize):
 class CurriculumCallback(BaseCallback):
     def _on_rollout_start(self) -> None:
         self.training_env.curriculum_callback()
+        with torch.no_grad():
+            self.model.policy.log_std.data.clamp_(max=0.0,min=-1.897)
         self.logger.record("curriculum/n_gates", self.training_env.n_gates)
         self.logger.record("curriculum/inner_depth", self.training_env.half_h)
+        #self.logger.record("curriculum/rate_cap", self.training_env.venv.rate_cap)
+        self.logger.record("curriculum/max_std", float(self.model.policy.log_std.detach().exp().max()))
+        ep_successes = self.training_env.venv.ep_successes
+        if len(ep_successes):
+            self.logger.record("curriculum/success_rate", float(sum(ep_successes) / len(ep_successes)))
 
     def _on_step(self) -> bool:
         return True
@@ -77,6 +84,7 @@ class EntropySchedulerCallback(BaseCallback):
     def _on_step(self) -> bool:
         progress = (self.training_env.n_gates - self.training_env.start_gate) / max(1, (self.training_env.n_gates_target - self.training_env.start_gate))
         self.model.ent_coef = self.schedule(1-progress)
+
         return True
 
 def configure_random_seed(seed, env=None):
@@ -112,36 +120,40 @@ def parser():
                         help="whether to reset timesteps for a model or not")
     parser.add_argument('--ct', '--crash_detection', type=int, default=0,
                         help="whether to use crash detection or not")
+    parser.add_argument('--lc', '--lower_cap', type=int, default=0,
+                        help="whether to lower cap or not")
     return parser
 
-def main():
-    args = parser().parse_args()
-    if (args.p not in (1, 2, 3)):
-        raise ValueError("Phases (1, 2, 3) are only available to run.")
-
-    # set yaml for quadcopter environments
+def edit_yaml(args) -> StringIO:
+    """Set YAML for quadcopter environments."""
     yaml = YAML()
     cfg = yaml.load(open(os.environ["FLIGHTMARE_PATH"] +
                          "/flightlib/configs/vec_env.yaml", 'r'))
+
+    # -----
+    # 1 env if rendering, 100 for train
+    # -----
     if not args.train:
         cfg["env"]["num_envs"] = 1
         cfg["env"]["num_threads"] = 1
     else:
         cfg["env"]["num_envs"] = 100
         cfg["env"]["num_threads"] = 1
-
-    if args.render:
-        cfg["env"]["render"] = "yes"
-    else:
-        cfg["env"]["render"] = "no"
     
-    if args.camera:
-        cfg["env"]["camera"] = "yes"
-    else:
-        cfg["env"]["camera"] = "no"
-
+    cfg["env"]["render"] = "yes" if args.render else "no"
+    cfg["env"]["camera"] = "yes" if args.camera else "no"
+    
     stream = StringIO()
     yaml.dump(cfg, stream)
+    
+    return stream
+
+def main():
+    args = parser().parse_args()
+    if (args.p not in (1, 2, 3)):
+        raise ValueError("Phases (1, 2, 3) are only available to run.")
+
+    stream = edit_yaml(args)
 
     # flies through gates
     # init gates is 1 for p1, but for p2 and p3 it should be learning gate geometry
@@ -151,8 +163,10 @@ def main():
         use_cam=args.camera,
         vision_weights=args.wv,
         phase=args.p,
-        init_gate_num=1, #if args.p == 1 else 8,
+        init_gate_num=1,
         crash_det=args.ct,
+        lower_cap=args.lc,
+        is_rendering=args.render,
     )
     env.randomize_gates = bool(args.r)
 
@@ -184,7 +198,7 @@ def main():
             random_x_range = (-5, 5) if args.p == 1 else (-8, 8)
             positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(*random_x_range)
             #6-7 p1, 8-10 p2
-            random_y_range = [(6, 7), (8, 10), (8, 25)][args.p-1]
+            random_y_range = [(6, 7), (8, 10), (12, 25)][args.p-1]
             random_z_range = [(1, 2), (2, 3), (2, 3)][args.p-1]
 
             positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range) # y always close but not intersecting/too close
@@ -244,7 +258,7 @@ def main():
                     net_arch=dict(pi=[64, 64], vf=[64, 64])), # old: 128, 128, 128, 128
                 env=env,
                 gae_lambda=0.95,
-                gamma=0.999,  # 0.999
+                gamma=0.9995,  # 0.999
                 n_steps=2048,
                 ent_coef=0.003,
                 learning_rate=1e-4,
@@ -266,9 +280,10 @@ def main():
             else:
                 env = SelectiveVecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
-
-        total_timesteps = 1.6e8 if args.p in (1, 2) else 4.2e8
-        starting_entropy = 0.005 #0.005 #if args.p == 1 else 0.001
+        
+        model.gamma = 0.9995  # temp since norm model does not have this
+        total_timesteps = 1.6e8 if args.p in (1, 2) else 3.2e8
+        starting_entropy = 0.005
         model.learn(
             total_timesteps=int(total_timesteps), 
             progress_bar=False,
@@ -290,7 +305,7 @@ def main():
         model = PPO.load(args.weight, env=env, device="cpu")
         test_model(
             env, model, 
-            num_rollouts=3,
+            num_rollouts=1,
             render=args.render, 
             weight_path=args.weight, 
             vid=args.camera, 

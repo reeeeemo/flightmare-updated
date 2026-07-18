@@ -30,7 +30,7 @@ class VecEnv {
   ~VecEnv();
 
   // - public OpenAI-gym style functions for vectorized environment
-  bool reset(Ref<MatrixRowMajor<>> obs);
+  bool reset(Ref<MatrixRowMajor<>> obs, const bool domrand = false);
   bool step(Ref<MatrixRowMajor<>> act, Ref<MatrixRowMajor<>> obs,
             Ref<Vector<>> reward, Ref<BoolVector<>> done,
             Ref<MatrixRowMajor<>> extra_info);
@@ -101,6 +101,9 @@ class VecEnv {
   RenderMessage_t unity_output_;
   uint16_t receive_id_{0};
   int gateCounter;
+
+  // rl objects
+  bool domrand_{false};
 
   // auxiliar variables
   int seed_, num_envs_, obs_dim_, act_dim_;

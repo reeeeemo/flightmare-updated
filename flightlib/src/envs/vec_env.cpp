@@ -68,16 +68,17 @@ template<typename EnvBase>
 VecEnv<EnvBase>::~VecEnv() {}
 
 template<typename EnvBase>
-bool VecEnv<EnvBase>::reset(Ref<MatrixRowMajor<>> obs) {
+bool VecEnv<EnvBase>::reset(Ref<MatrixRowMajor<>> obs, const bool domrand) {
   if (obs.rows() != num_envs_ || obs.cols() != obs_dim_) {
     logger_.error(
       "Input matrix dimensions do not match with that of the environment.");
     return false;
   }
 
+  domrand_ = domrand;
   receive_id_ = 0;
   for (int i = 0; i < num_envs_; i++) {
-    envs_[i]->reset(obs.row(i));
+    envs_[i]->reset(obs.row(i), true, domrand);
   }
   return true;
 }
@@ -183,7 +184,7 @@ void VecEnv<EnvBase>::perAgentStep(int agent_id, Ref<MatrixRowMajor<>> act,
                                    Ref<Vector<>> reward, Ref<BoolVector<>> done,
                                    Ref<MatrixRowMajor<>> extra_info) {
   if (done(agent_id)) {
-    envs_[agent_id]->reset(obs.row(agent_id));
+    envs_[agent_id]->reset(obs.row(agent_id), true, domrand_);
     reward(agent_id) = 0;
     done(agent_id) = false;
     return;

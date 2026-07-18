@@ -65,6 +65,9 @@ class Quadrotor : ObjectBase {
   inline void setSize(const Ref<Vector<3>> size) { size_ = size; };
   inline void setCollision(const bool collision) { collision_ = collision; };
 
+  // set angvel tau
+  void setKinvAngVelTau(const Vector<3> new_tau) { Kinv_ang_vel_tau_ = new_tau.asDiagonal(); };
+
  private:
   // quadrotor dynamics, integrators
   QuadrotorDynamics dynamics_;
@@ -87,7 +90,7 @@ class Quadrotor : ObjectBase {
   Matrix<4, 4> B_allocation_inv_;
 
   // P gain for body-rate control
-  const Matrix<3, 3> Kinv_ang_vel_tau_ =
+  Matrix<3, 3> Kinv_ang_vel_tau_ =
     Vector<3>(16.6, 16.6, 5.0).asDiagonal();
   // gravity
   const Vector<3> gz_{0.0, 0.0, Gz};

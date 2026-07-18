@@ -18,14 +18,13 @@ QuadrotorEnv::QuadrotorEnv(const std::string &cfg_path)
 
   quadrotor_ptr_ = std::make_shared<Quadrotor>();
   // update dynamics
-  QuadrotorDynamics dynamics;
-  dynamics.updateParams(cfg_);
-  quadrotor_ptr_->updateDynamics(dynamics);
+  dynamics_.updateParams(cfg_);
+  quadrotor_ptr_->updateDynamics(dynamics_);
 
   // define a bounding box
   world_box_ << -500, 500, -500, 500, -500, 500; // was 0, 500 for z
   if (!quadrotor_ptr_->setWorldBox(world_box_)) {
-    logger_.error("cannot set wolrd box");
+    logger_.error("cannot set worLd box");
   };
 
   // define input and output dimension for the environment
@@ -62,7 +61,7 @@ void QuadrotorEnv::modifyResetPositions(Ref<Vector<>> pos) {
   z_dist = std::uniform_real_distribution<Scalar>(pos[4], pos[5]);
 }
 
-bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random) {
+bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random, const bool domrand) {
   quad_state_.setZero();
   quad_act_.setZero();
 
@@ -88,6 +87,35 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random) {
     quad_state_.x(QS::ATTZ) = uniform_dist_(random_gen_) * rot_mult_;
     quad_state_.qx /= quad_state_.qx.norm();
   }
+  // update random dynamics
+  if (domrand) {
+    YAML::Node p;
+    Scalar tm_0 = 1.3298253500372892e-6 * (1.0 + 0.4 * uniform_dist_(random_gen_));
+    Scalar tm_1 = 0.0038360810526746033 * (1.0 + 0.4 * uniform_dist_(random_gen_));
+    Scalar tm_2 = -1.7689986848125325 * (1.0 + 0.4 * uniform_dist_(random_gen_));
+
+    Scalar new_mass = 0.73 * (1.0 + 0.2 * uniform_dist_(random_gen_));
+    p["quadrotor_dynamics"]["mass"] = new_mass;
+    p["quadrotor_dynamics"]["arm_l"] = 0.17 * (1.0 + 0.2 * uniform_dist_(random_gen_));
+    p["quadrotor_dynamics"]["motor_tau"] = 0.0001 * (1.0 + 0.5 * uniform_dist_(random_gen_));
+    p["quadrotor_dynamics"]["kappa"] = 0.016 * (1.0 + 0.3 * uniform_dist_(random_gen_));
+    p["quadrotor_dynamics"]["thrust_map"] = std::vector<Scalar>{tm_0, tm_1, tm_2};
+    p["quadrotor_dynamics"]["motor_omega_min"] = 500.0 * (1.0 + 0.3 * uniform_dist_(random_gen_));
+    p["quadrotor_dynamics"]["motor_omega_max"] = 4000.0 + (1000 * uniform_dist_(random_gen_));
+    p["quadrotor_dynamics"]["omega_max"] = std::vector<Scalar>{15.0, 15.0, 6.0};
+    dynamics_.updateParams(p);
+    quadrotor_ptr_->updateDynamics(dynamics_);
+
+    // update random angular velocity tau (control loop management)
+    Scalar kn_0 = 16.6 * (1.0 + 0.5 * uniform_dist_(random_gen_));  // roll
+    Scalar kn_1 = 16.6 * (1.0 + 0.5 * uniform_dist_(random_gen_));  // pitch
+    Scalar kn_2 = 5.0  * (1.0 + 0.5 * uniform_dist_(random_gen_));  // yaw
+    quadrotor_ptr_->setKinvAngVelTau(Vector<3>(kn_0, kn_1, kn_2));
+
+    act_mean_ = Vector<quadenv::kNAct>::Ones() * (-new_mass * Gz) / 4;
+    act_std_ = Vector<quadenv::kNAct>::Ones() * (-new_mass * 2 * Gz) / 4;
+  }
+
   // reset quadrotor with random states
   quadrotor_ptr_->reset(quad_state_);
 

@@ -189,7 +189,7 @@ class QuadcopterHoverVec(VecEnv):
         """Resets drone environment."""
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
         self._prev_action[:] = 0
-        self.wrapper.reset(self._drone_obs)
+        self.wrapper.reset(self._drone_obs, False)
         self._update_observation()
         return self._full_obs.copy()
 
