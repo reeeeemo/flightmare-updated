@@ -78,7 +78,7 @@ bool VecEnv<EnvBase>::reset(Ref<MatrixRowMajor<>> obs, const bool domrand) {
   domrand_ = domrand;
   receive_id_ = 0;
   for (int i = 0; i < num_envs_; i++) {
-    envs_[i]->reset(obs.row(i), true, domrand);
+    envs_[i]->reset(obs.row(i), domrand);
   }
   return true;
 }
@@ -143,6 +143,11 @@ void VecEnv<EnvBase>::setLowestZ(const Scalar num) {
 }
 
 template<typename EnvBase>
+void VecEnv<EnvBase>::setPadLaunch(const bool v) {
+  for (int i = 0; i < num_envs_; i++) envs_[i]->setPadLaunch(v);
+}
+
+template<typename EnvBase>
 void VecEnv<EnvBase>::decreaseRotMult(const Scalar num) {
   for (int i = 0; i < num_envs_; i++) envs_[i]->decreaseRotMult(num);
 }
@@ -184,7 +189,7 @@ void VecEnv<EnvBase>::perAgentStep(int agent_id, Ref<MatrixRowMajor<>> act,
                                    Ref<Vector<>> reward, Ref<BoolVector<>> done,
                                    Ref<MatrixRowMajor<>> extra_info) {
   if (done(agent_id)) {
-    envs_[agent_id]->reset(obs.row(agent_id), true, domrand_);
+    envs_[agent_id]->reset(obs.row(agent_id), domrand_);
     reward(agent_id) = 0;
     done(agent_id) = false;
     return;

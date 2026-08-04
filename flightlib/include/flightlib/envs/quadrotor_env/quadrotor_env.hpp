@@ -51,7 +51,7 @@ class QuadrotorEnv final : public EnvBase {
   ~QuadrotorEnv();
 
   // - public OpenAI-gym-style functions
-  bool reset(Ref<Vector<>> obs, const bool random = true, const bool domrand = false) override;
+  bool reset(Ref<Vector<>> obs, const bool domrand = false) override;
   Scalar step(const Ref<Vector<>> act, Ref<Vector<>> obs) override;
 
   // - public set functions
@@ -61,6 +61,7 @@ class QuadrotorEnv final : public EnvBase {
   void addRGBCamera();
   void modifyResetPositions(Ref<Vector<>> pos);
   void setLowestZ(const Scalar num);
+  void setPadLaunch(const bool v);
 
   // - public get functions
   bool getObs(Ref<Vector<>> obs) override;
@@ -103,6 +104,9 @@ class QuadrotorEnv final : public EnvBase {
   // observations and actions (for RL)
   Vector<quadenv::kNObs> quad_obs_;
   Vector<quadenv::kNAct> quad_act_;
+
+  // whether to init drone on a defined launchpad w/tilt or random spawn
+  bool pad_launch_{false};
 
   // reward function design (for model-free reinforcement learning)
   Vector<quadenv::kNObs> goal_state_;

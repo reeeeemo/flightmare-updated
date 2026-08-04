@@ -27,6 +27,7 @@ PYBIND11_MODULE(flightgym, m) {
     .def("increaseRotMult", &VecEnv<QuadrotorEnv>::increaseRotMult)
     .def("decreaseRotMult", &VecEnv<QuadrotorEnv>::decreaseRotMult)
     .def("setLowestZ", &VecEnv<QuadrotorEnv>::setLowestZ)
+    .def("setPadLaunch", &VecEnv<QuadrotorEnv>::setPadLaunch)
     .def("close", &VecEnv<QuadrotorEnv>::close)
     .def("isTerminalState", &VecEnv<QuadrotorEnv>::isTerminalState)
     .def("curriculumUpdate", &VecEnv<QuadrotorEnv>::curriculumUpdate)

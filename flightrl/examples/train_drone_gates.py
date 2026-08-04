@@ -119,6 +119,8 @@ def parser():
                         help="whether to reset timesteps for a model or not")
     parser.add_argument('--ct', '--crash_detection', type=int, default=0,
                         help="whether to use crash detection or not")
+    parser.add_argument('--pl', '--pad_launch', type=int, default=1,
+                        help="whether to use a pad launch or random init")
     return parser
 
 def edit_yaml(args) -> StringIO:
@@ -163,6 +165,7 @@ def main():
         init_gate_num=1,
         crash_det=args.ct,
         is_rendering=args.render,
+        pad_launch=args.pl
     )
     env.randomize_gates = bool(args.r)
 

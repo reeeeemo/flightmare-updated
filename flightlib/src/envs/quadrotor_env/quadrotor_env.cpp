@@ -61,14 +61,33 @@ void QuadrotorEnv::modifyResetPositions(Ref<Vector<>> pos) {
   z_dist = std::uniform_real_distribution<Scalar>(pos[4], pos[5]);
 }
 
-bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random, const bool domrand) {
+bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool domrand) {
   quad_state_.setZero();
   quad_act_.setZero();
 
-  if (random) {
+  // randomly reset quadrotor x,y state
+  quad_state_.x(QS::POSX) = x_dist(random_gen_); 
+  quad_state_.x(QS::POSY) = y_dist(random_gen_); 
+
+  // reset orientation
+  // (w, x, y, z)
+  // how far is the quadcopter tilted (1.0~=0, 0.0~=180)
+  quad_state_.x(QS::ATTW) = rot_scale_;
+
+  // x, y, z vector components of quaternion for rot matrix
+  quad_state_.x(QS::ATTX) = uniform_dist_(random_gen_) * rot_mult_;
+  quad_state_.x(QS::ATTY) = uniform_dist_(random_gen_) * rot_mult_;
+  quad_state_.x(QS::ATTZ) = uniform_dist_(random_gen_) * rot_mult_;
+  quad_state_.qx /= quad_state_.qx.norm();
+  
+  // spawn off of pad (no vel, z upwards)
+  if (pad_launch_) {
+    quad_state_.x(QS::POSZ) = 0.15;
+    quad_state_.x(QS::VELX) = 0.0;
+    quad_state_.x(QS::VELY) = 0.0;
+    quad_state_.x(QS::VELZ) = 0.0;
+  } else {
     // randomly reset the quadrotor state
-    quad_state_.x(QS::POSX) = x_dist(random_gen_); 
-    quad_state_.x(QS::POSY) = y_dist(random_gen_); 
     quad_state_.x(QS::POSZ) = z_dist(random_gen_); 
     if (quad_state_.x(QS::POSZ) < -0.0)
       quad_state_.x(QS::POSZ) = -quad_state_.x(QS::POSZ);
@@ -76,17 +95,8 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random, const bool domran
     quad_state_.x(QS::VELX) = uniform_dist_(random_gen_);
     quad_state_.x(QS::VELY) = uniform_dist_(random_gen_);
     quad_state_.x(QS::VELZ) = uniform_dist_(random_gen_);
-    // reset orientation
-    // (w, x, y, z)
-    // how far is the quadcopter tilted (1.0~=0, 0.0~=180)
-    quad_state_.x(QS::ATTW) = rot_scale_;
-
-    // x, y, z vector components of quaternion for rot matrix
-    quad_state_.x(QS::ATTX) = uniform_dist_(random_gen_) * rot_mult_;
-    quad_state_.x(QS::ATTY) = uniform_dist_(random_gen_) * rot_mult_;
-    quad_state_.x(QS::ATTZ) = uniform_dist_(random_gen_) * rot_mult_;
-    quad_state_.qx /= quad_state_.qx.norm();
   }
+
   // update random dynamics
   if (domrand) {
     YAML::Node p;
@@ -196,6 +206,10 @@ void QuadrotorEnv::decreaseRotMult(const Scalar num) {
 
 void QuadrotorEnv::setLowestZ(const Scalar num) {
   lowest_z_dist = num;
+}
+
+void QuadrotorEnv::setPadLaunch(const bool v) {
+  pad_launch_ = v;
 }
 
 bool QuadrotorEnv::getAct(Ref<Vector<>> act) const {

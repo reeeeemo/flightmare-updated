@@ -46,6 +46,7 @@ class VecEnv {
   void addRGBCamera();
   void modifyResetPositions(Ref<Vector<>> pos);
   void setLowestZ(const Scalar num);
+  void setPadLaunch(const bool v);
 
   // public get functions
   void getObs(Ref<MatrixRowMajor<>> obs);
