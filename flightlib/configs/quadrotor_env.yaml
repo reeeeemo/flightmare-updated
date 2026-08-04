@@ -11,7 +11,7 @@ quadrotor_dynamics:
   arm_l: 0.17
   motor_omega_min: 150.0 # motor rpm min
   motor_omega_max: 3000.0 # motor rpm max
-  motor_tau: 0.0001 # motor step response
+  motor_tau: 0.05 # motor step response 0.0001
   thrust_map: [1.3298253500372892e-06, 0.0038360810526746033, -1.7689986848125325]
   kappa: 0.016 # rotor drag coeff
   omega_max: [15.0, 15.0, 6.0]  # body rate constraint (x, y, z) (6.0, 6.0, 6.0)

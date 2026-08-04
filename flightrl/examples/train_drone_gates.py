@@ -61,7 +61,6 @@ class CurriculumCallback(BaseCallback):
             self.model.policy.log_std.data.clamp_(max=0.0,min=-1.897)
         self.logger.record("curriculum/n_gates", self.training_env.n_gates)
         self.logger.record("curriculum/inner_depth", self.training_env.half_h)
-        #self.logger.record("curriculum/rate_cap", self.training_env.venv.rate_cap)
         self.logger.record("curriculum/max_std", float(self.model.policy.log_std.detach().exp().max()))
         ep_successes = self.training_env.venv.ep_successes
         if len(ep_successes):
@@ -120,8 +119,6 @@ def parser():
                         help="whether to reset timesteps for a model or not")
     parser.add_argument('--ct', '--crash_detection', type=int, default=0,
                         help="whether to use crash detection or not")
-    parser.add_argument('--lc', '--lower_cap', type=int, default=0,
-                        help="whether to lower cap or not")
     return parser
 
 def edit_yaml(args) -> StringIO:
@@ -165,7 +162,6 @@ def main():
         phase=args.p,
         init_gate_num=1,
         crash_det=args.ct,
-        lower_cap=args.lc,
         is_rendering=args.render,
     )
     env.randomize_gates = bool(args.r)
@@ -281,8 +277,7 @@ def main():
                 env = SelectiveVecNormalize.load(args.norm_weight, env)
             model = PPO.load(args.weight, env=env, device="cpu")
         
-        model.gamma = 0.9995  # temp since norm model does not have this
-        total_timesteps = 1.6e8 if args.p in (1, 2) else 3.2e8
+        total_timesteps = 1.2e8 if args.p in (1, 2) else 3.2e8
         starting_entropy = 0.005
         model.learn(
             total_timesteps=int(total_timesteps), 

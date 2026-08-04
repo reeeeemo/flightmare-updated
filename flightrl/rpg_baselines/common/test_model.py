@@ -220,6 +220,7 @@ def test_model(
                 'next_x','next_y','next_z']
             for l, v in zip(labels, env.venv._full_obs[0]):
                 logger.info(f"  {l}: {v:.3f}")
+                logger.info(f"  cur_gate: {env.venv.cur_gate[0]}")
             
             total_rew += rew
             ep_len += 1
@@ -234,7 +235,7 @@ def test_model(
                     )
                     out.write(results[0].plot())
                 elif build_dataset and ep_len % 25 == 0:
-                    labels = convert_to_yolo_seg_labels(env)
+                    labels = convert_to_yolo_kp_labels(env)
                     if labels:
                         cv2.imwrite(str(images_dir / f"{dataset_iter}_{n_roll}_{ep_len:010d}.jpg"), frame)
                         with open(str(labels_dir / f"{dataset_iter}_{n_roll}_{ep_len:010d}.txt"), "w", encoding="utf-8") as f:

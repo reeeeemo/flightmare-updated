@@ -97,7 +97,7 @@ bool QuadrotorEnv::reset(Ref<Vector<>> obs, const bool random, const bool domran
     Scalar new_mass = 0.73 * (1.0 + 0.2 * uniform_dist_(random_gen_));
     p["quadrotor_dynamics"]["mass"] = new_mass;
     p["quadrotor_dynamics"]["arm_l"] = 0.17 * (1.0 + 0.2 * uniform_dist_(random_gen_));
-    p["quadrotor_dynamics"]["motor_tau"] = 0.0001 * (1.0 + 0.5 * uniform_dist_(random_gen_));
+    p["quadrotor_dynamics"]["motor_tau"] = 0.055 + 0.045 * uniform_dist_(random_gen_);  // [0.01, 0.1]
     p["quadrotor_dynamics"]["kappa"] = 0.016 * (1.0 + 0.3 * uniform_dist_(random_gen_));
     p["quadrotor_dynamics"]["thrust_map"] = std::vector<Scalar>{tm_0, tm_1, tm_2};
     p["quadrotor_dynamics"]["motor_omega_min"] = 500.0 * (1.0 + 0.3 * uniform_dist_(random_gen_));

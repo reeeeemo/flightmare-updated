@@ -29,7 +29,6 @@ class QuadcopterGatesVec(VecEnv):
             init_gate_num: int = 1,
             target_gate_num: int = 14,
             crash_det: bool = False,
-            lower_cap: bool = False,
             is_rendering: bool = False,
          ):
         if phase not in [1, 2, 3]:
@@ -42,7 +41,7 @@ class QuadcopterGatesVec(VecEnv):
         self.num_drone_obs = self.wrapper.getObsDim()
         self.num_full_obs = self.num_drone_obs + 25
         self.num_acts = self.wrapper.getActDim()
-        self.max_episode_steps = 2400 if phase in (1,2) else 4800
+        self.max_episode_steps = 2400 if phase in (1,2) else 4800 # instead of 4800
         print(f"[OBSERVATION STATE DIM]: {self.num_drone_obs}")
         print(f"[ACTION STATE DIM]: {self.num_acts}")
 
@@ -88,23 +87,20 @@ class QuadcopterGatesVec(VecEnv):
         # vars to hold gate positions for drone if no dets
         self._seen_cur_gate = np.zeros((self.num_envs, 3), dtype=np.float32)
         self._seen_xyz_corners = np.zeros((self.num_envs, 12), dtype=np.float32)
-        self._seen_nxt_gate = np.zeros((self.num_envs, 3), dtype=np.float32)
+        self._seen_next_gate = np.zeros((self.num_envs, 3), dtype=np.float32)
         
         # vars to accumulate drift
         self._cur_gate_drift = np.zeros((self.num_envs, 3), dtype=np.float32)
         self._cur_xyz_drift = np.zeros((self.num_envs, 12), dtype=np.float32)
+        self._next_xyz_drift = np.zeros((self.num_envs, 3), dtype=np.float32)
         
-        # 6 rads / sec
-        #self.rate_cap = 6.0 #3.38#6.0
-        self.lower_cap = lower_cap
-
         # ------------------------------------
         # REWARD COEFFICIENTS
         # ------------------------------------
-        self.lin_vel_coef = 1 if phase != 3 else 0
-        self.ang_vel_coef = -0.001 if phase != 3 else 0
+        self.lin_vel_coef = 1 #if phase != 3 else 0
+        self.ang_vel_coef = -0.001 #if phase != 3 else 0
         self.act_coef = -0.01 if phase != 3 else -0.1
-        self.offset_coef = 0 if phase != 3 else 2
+        self.offset_coef = 0 #if phase != 3 else 2 # og was phase in (2, 3)
         self.perception_coef = -0.01 if phase != 3 else -0.1
         self.gate_bonus = 10 if phase != 3 else 30
 
@@ -142,10 +138,10 @@ class QuadcopterGatesVec(VecEnv):
             [-0.75, -0.75, 0] # bottom left
         ], dtype=np.float32)
 
-        # fx = (360/2) / tan(90/2) = 180 = fy since square pixels
+        # fx = 320 = fy since square pixels
         self.camera_matrix = np.array([
-            [180, 0, 320],
-            [0, 180, 180],
+            [320, 0, 320],
+            [0, 320, 180],
             [0, 0, 1]
         ], dtype=np.float32)
 
@@ -178,7 +174,12 @@ class QuadcopterGatesVec(VecEnv):
         self.injection_rate = 0.75
         self.training_seeds = [1, 20, 40, 0, 3, 6, 9, 7]
 
+        # ------------------------------------
+        # VISION INFERENCE VARS
         self._last_imgs = np.zeros((self.num_envs, 640, 360, 3), dtype=np.float32)
+        self.filtered_gate = [None for _ in range(self.num_envs)]
+        self.filtered_corners = [None for _ in range(self.num_envs)]
+        # ------------------------------------
         
 
     def seed(self, seed=0):
@@ -215,6 +216,7 @@ class QuadcopterGatesVec(VecEnv):
         cam_forward = forward_axis * np.cos(np.radians(20)) + up_axis * np.sin(np.radians(20))
         camera_dev = np.sum(gate_dir_norm * cam_forward, axis=1)
         self.camera_penalty = np.maximum(0.0, np.cos(np.radians(60)) - camera_dev)
+        self.camera_penalty[gate_dist.squeeze() < 2.0] = 0
         
         # ------------------------------------
         # COMPUTE DRONE-TO-GATE PROGRESS + EXCESS CHANGE REWARDS
@@ -375,7 +377,7 @@ class QuadcopterGatesVec(VecEnv):
                 self._full_obs[:, 0:3] = self.gates[cur_gate_idx] - self.drone_pos
                 for i in range(self.num_envs):
                     if next_gate_available[i]:
-                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ (self.gates[nxt_gate_idx[i]] - self.drone_pos[i])
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ self._full_obs[i, 0:3] #self._full_obs[i, 3:12].reshape(3,3).T @ (self.gates[nxt_gate_idx[i]] - self.drone_pos[i])
                     else:
                         self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ self._full_obs[i, 0:3]
             else:
@@ -385,29 +387,37 @@ class QuadcopterGatesVec(VecEnv):
     
                 for i in range(self.num_envs):
                     if next_gate_available[i]:
-                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ next_gate_corners[i].reshape(4, 3).mean(axis=0)
+                        self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ self._full_obs[i, 0:3] #self._full_obs[i, 3:12].reshape(3,3).T @ next_gate_corners[i].reshape(4, 3).mean(axis=0)
                     else:
                         self._full_obs[i, 34:37] = self._full_obs[i, 3:12].reshape(3,3).T @ self._full_obs[i, 0:3]
 
             # ------------------------------------
-            # CAMERA DEVIATION -- FOV HOLD
+            # CAMERA DEVIATION -- FOV HOLD // 30 HZ FROZEN
             # ------------------------------------
             if self.phase == 3:
-                has_deviated = (self.camera_penalty > 0)
-                has_nxt_deviated = (self.next_camera_penalty > 0)
+                steps = np.array([len(self.rewards[i]) for i in range(self.num_envs)])
+                fresh = (steps % 4 == 0)  # 120 / 30 = every 4 timesteps fresh vals
+
+                has_deviated = (self.camera_penalty > 0) | ~(fresh)
+                has_nxt_deviated = (self.camera_penalty > 0) | ~(fresh) #(self.next_camera_penalty > 0) | ~(fresh)
                 self._cur_gate_drift[~has_deviated] = 0
                 self._cur_xyz_drift[~has_deviated] = 0
-
+                self._next_xyz_drift[~has_nxt_deviated] = 0
+                
+                R = self._full_obs[:, 3:12].reshape(self.num_envs, 3,3)
+                
                 # set if not deviating
                 self._seen_cur_gate[~has_deviated] = self._full_obs[~has_deviated, 0:3]
                 self._seen_xyz_corners[~has_deviated] = self._full_obs[~has_deviated, 22:34]
-                self._seen_nxt_gate[~has_nxt_deviated] = self._full_obs[~has_nxt_deviated, 34:37]
+                self._seen_next_gate[~has_nxt_deviated] = np.einsum('nij,nj->ni', R[~has_nxt_deviated], self._full_obs[~has_nxt_deviated, 0:3]) #np.einsum('nij,nj->ni', R[~has_nxt_deviated], self._full_obs[~has_nxt_deviated, 34:37])
                 # if deviated, dead reckon via imu estimated velocity
                 self._cur_xyz_drift[has_deviated] -= np.tile(self._full_obs[has_deviated, 12:15], 4) * self.sim_dt
                 self._cur_gate_drift[has_deviated] -= self._full_obs[has_deviated, 12:15] * self.sim_dt
+                self._next_xyz_drift[has_nxt_deviated] -= self._full_obs[has_nxt_deviated, 12:15] * self.sim_dt
+                
                 self._full_obs[has_deviated, 22:34] = self._seen_xyz_corners[has_deviated] + self._cur_xyz_drift[has_deviated]
                 self._full_obs[has_deviated, 0:3] = self._seen_cur_gate[has_deviated] + self._cur_gate_drift[has_deviated]
-                self._full_obs[has_nxt_deviated, 34:37] = self._seen_nxt_gate[has_nxt_deviated]
+                self._full_obs[has_nxt_deviated, 34:37] = np.einsum('nji,nj->ni', R[has_nxt_deviated], self._full_obs[has_nxt_deviated, 0:3]) #np.einsum('nji,nj->ni', R[has_nxt_deviated], self._seen_next_gate[has_nxt_deviated] + self._next_xyz_drift[has_nxt_deviated])
             
 
         elif frames.size != 0:
@@ -419,42 +429,43 @@ class QuadcopterGatesVec(VecEnv):
             results = self.vision_model(
                 list(frames),
                 device=("cuda" if torch.cuda.is_available() else "cpu"),
-                verbose=False
+                verbose=False,
+                conf=0.5
             )
                 
             # get most confident gate segmentation mask to transform
             for env_idx, result in enumerate(results):
                 n_det = len(result.boxes)
                 if n_det == 0:
-                    #vb = self._full_obs[env_idx, 12:15]
-                    self._full_obs[env_idx, 22:34] = 0 #np.tile(vb, 4) * self.sim_dt
-                    self._full_obs[env_idx, 0:3] = 0 # vb * self.sim_dt
-                    self._full_obs[env_idx, 34:37] = 0
+                    vb = self._full_obs[env_idx, 12:15]
+                    self._full_obs[env_idx, 22:34] -= np.tile(vb, 4) * self.sim_dt
+                    self._full_obs[env_idx, 0:3] -= vb * self.sim_dt
+                    self._seen_next_gate[env_idx] -= vb * self.sim_dt
+                    self._full_obs[env_idx, 34:37] = (self._full_obs[env_idx, 3:12].reshape(3, 3)).T @ self._full_obs[env_idx, 0:3] #self._seen_next_gate[env_idx]
                     continue
                 
                 best_2 = (result.boxes.xywh[:, 2] * result.boxes.xywh[:, 3]).argsort(descending=True)[:2]
                 cur_success = False
+                next_success = False
                 for i, best in enumerate(best_2):
                     # --------------------
                     # GET KEYPOINTS OR DERIVE FROM SEGMENTATION MASKS
-                    # MUST BE IN FORM [TR, BR, BL, TL]
+                    # MUST BE IN FORM [TL, TR, BR, BL]
                     # --------------------
                     if self.vision_model.task == "pose":
                         kp_2d = result.keypoints.xy[best].cpu().numpy().astype(np.float32)
                     else:
                         pts = result.masks.xy[best].astype(np.float32)
+                        rect = cv2.minAreaRect(pts)
+                        print("box px:", rect[1])
                         
-                        centroid = pts.mean(axis=0)
-                        sums = pts.sum(axis=1)
-                        diffs = pts[:, 0] - pts[:, 1]
-                        
-                        TL = pts[np.argmin(sums)]
-                        BR = pts[np.argmax(sums)]
-                        TR = pts[np.argmax(diffs)]
-                        BL = pts[np.argmin(diffs)]
-                        outer = np.array([TL, TR, BR, BL])
-                        inner = centroid + (outer - centroid)
-                        kp_2d = inner.reshape(4,1,2).astype(np.float32)
+                        box = cv2.boxPoints(rect)
+                        box = box[np.argsort(box[:, 1])]
+                        top = box[:2]
+                        bot = box[2:]
+                        TL, TR = top[np.argsort(top[:, 0])]
+                        BL, BR = bot[np.argsort(bot[:, 0])]
+                        kp_2d = np.array([TL, TR, BR, BL], dtype=np.float32)
                         
                     if len(kp_2d) != 4:
                         continue
@@ -464,20 +475,20 @@ class QuadcopterGatesVec(VecEnv):
                     # --------------------
                     try:
                         success, rot_vec, trans_vec = cv2.solvePnP(
-                            self.object_points if self.model_task == "pose" else self.object_points.reshape(4,1,3), 
-                            kp_2d[[3, 0, 1, 2]].reshape(4,1,2) if self.model_task == "pose" else kp_2d, 
+                            self.object_points.reshape(4,1,3), 
+                            kp_2d.reshape(4,1,2) if self.model_task == "pose" else kp_2d, 
                             self.camera_matrix, 
                             None,
-                            flags=cv2.SOLVEPNP_ITERATIVE 
+                            flags=cv2.SOLVEPNP_IPPE_SQUARE
                         )
                     except cv2.error:
                         continue
 
                     # check for detection being in front of drone
-                    if trans_vec[2] <= 2:
+                    if success and trans_vec[2] <= 2:
                         success = False
                         continue
-                    elif success:
+                    if success:
                         # transform from 3d camera local pos to drone local pos
                         # first convert points to camera space
                         rot_mat, _ = cv2.Rodrigues(rot_vec)
@@ -489,33 +500,51 @@ class QuadcopterGatesVec(VecEnv):
                         corners_world = (R_world @ corners_body.T).T
                         
                         cand = corners_world.mean(axis=0)
+                        
+                        # --------------------
+                        # DON'T USE PREV GATE THAT WAS CROSSED
+                        # --------------------
                         if (np.any(self.prev_gate_crossed[env_idx]) and 
                             np.linalg.norm(cand - self.prev_gate_crossed[env_idx]) <= 2.5):
                             continue
                         
-                        # on success set cur and next gate to same val, if already done set next gate to new
+                        # on success set cur gate else set next gate
                         if not cur_success:
-                            self._full_obs[env_idx, 22:34] = corners_world[[1, 0, 2, 3]].flatten()
-                            self._full_obs[env_idx, 0:3] = cand
-                            self._full_obs[env_idx, 34:37] = 0 
+                            # ----------
+                            # SET CUR GATE
+                            # ----------
+                            if self.filtered_gate[env_idx] is None:
+                                self.filtered_gate[env_idx] = cand.copy()
+                            else:
+                                self.filtered_gate[env_idx] = np.asarray(self.filtered_gate[env_idx], float).copy()
+                                self.filtered_gate[env_idx][:2] = cand[:2]
+                            # -----------
+                            # SET CUR CORNERS
+                            # ----------
+                            self.filtered_corners[env_idx] = corners_world[[1, 0, 2, 3]].flatten()
+
+                            self._full_obs[env_idx, 22:34] = self.filtered_corners[env_idx]
+                            self._full_obs[env_idx, 0:3] = self.filtered_gate[env_idx]
                             cur_success=True
                         else:
+                            self._seen_next_gate[env_idx] = cand
                             self._full_obs[env_idx, 34:37] = R_world.T @ cand
+                            next_success=True
+                        
+                        if cur_success and not next_success:
+                            vb = self._full_obs[env_idx, 12:15]
+                            self._seen_next_gate[env_idx] -= vb * self.sim_dt
+                            self._full_obs[env_idx, 34:37] = R_world.T @ self._seen_next_gate[env_idx]
                 
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
 
         Args:
-            action: [normalized thrust, roll, pitch, yaw] rates
+            action: [normalized thrust, pitch, roll, yaw] rates
         Returns:
             observation, reward, done, env information
         """
-        # ------------------------------------
-        # Cap new action over time by the rate cap
-        # ------------------------------------
-        # flightmare multiplies all cmds by 6 rads
-        #a_cap = self.rate_cap / 6.0
-        #action[:, 1:4] = np.clip(action[:, 1:4], -a_cap, a_cap)
+        # pitch: (pos, up), roll: (pos, right), yaw: (pos, left)
         
         # ------------------------------------
         # OBS / REWARD RECIEVED 
@@ -563,10 +592,11 @@ class QuadcopterGatesVec(VecEnv):
         self.prev_gate_crossed[self._done] = 0
         if self.phase == 3:
             self._seen_cur_gate[self._done] = 0
-            self._seen_nxt_gate[self._done] = 0
             self._seen_xyz_corners[self._done] = 0
+            self._seen_next_gate[self._done] = 0
             self._cur_gate_drift[self._done] = 0
             self._cur_xyz_drift[self._done] = 0
+            self._next_xyz_drift[self._done] = 0
 
         return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
@@ -723,7 +753,6 @@ class QuadcopterGatesVec(VecEnv):
         threshold = min(0.65, self.p_target**self.n_gates)
         if success_rate >= threshold:
             self.n_gates = min(self.n_gates+1, self.n_gates_target)
-            #self.rate_cap = max(1.15, self.rate_cap - 0.373)
             self.ep_successes.clear()
         n_gates = self.n_gates
         
