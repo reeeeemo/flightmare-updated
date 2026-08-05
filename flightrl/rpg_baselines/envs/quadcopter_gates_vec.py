@@ -108,9 +108,10 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         # GATE VARIABLES
         # ------------------------------------
-        # half of inner width/height
+        # half of inner width/height + account for drone size scoring
         self.half_w = 0.75
         self.half_h = 0.75
+        self.score_half = 0.61
         self.gate_depth = 0.26  # depth of gate
         self.v_max = 99
         self.sim_dt = 0.00833333333  # 120hz
@@ -252,65 +253,71 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         # UPDATE CUR GATE AND REWARD/PUNISH CLOSENESS TO GATE
         # ------------------------------------
-        for i in range(self.num_envs):
-            if self.cur_gate[i] >= len(self.gates):
-                continue
-            # get coordinates in gate local space:
-            # idx 0 = left/right offset from gate center
-            # idx 1 = distance along the approach axis (forward/backward)
-            # idx 2 = up/down offset from gate center
-            local_positions = self.rot_mats[self.cur_gate[i]].T @ gate_dir[i]
-
-            ### find whether drone has gone through or hit gate
-            on_plane = 0 <= local_positions[1] < self.gate_depth
-            in_opening = (
-                abs(local_positions[0]) < self.half_w 
-                and abs(local_positions[2]) < self.half_h
-            )
-
-            if on_plane and not in_opening:
-                # --------------------
-                # IF HIT FRAME
-                # --------------------
-                if self.crash_det:
-                    self._done[i] = True
-                else:
-                    self._reward[i] -= 0.5
-            elif on_plane and in_opening:
-                # --------------------
-                # IF WENT THROUGH FRAME
-                # --------------------
-                self._reward[i] += self.gate_bonus
-                self._reward[i] += self.offset_coef * (1.0 - (local_positions[0]/self.half_w)**2 - (local_positions[2]/self.half_h)**2)
-                self.cur_gate[i] += 1
-                # if not at end, set prev dir and re-update obs since it will be stale
-                if self.cur_gate[i] < len(self.gates):
-                    self._prev_gate_dir[i] = self.gates[self.cur_gate[i]] - self.drone_pos[i]
-                    if not self.vision_model:
-                        self.gate_crossed = True
-                    else:
-                        self.prev_gate_crossed[i] = self._full_obs[i, 0:3]
-
-            # --------------------
-            # SET DONE FLAG + GIVE TIME-BASED BONUS IF COMPLETION
-            # --------------------
-            if self.cur_gate[i] >= len(self.gates):
-                self._done[i] = True
-            if self._done[i] and self.cur_gate[i] >= len(self.gates):
-                self._reward[i] += 50 + 25 * (1.0 - len(self.rewards[i]) / self.max_episode_steps)  # old was 50
-                
-            # --------------------
-            # GIVE PENALTY IF UNCOMPLETE COURSE, TIMEOUT
-            # --------------------
-            # rudimentary way for timeout since it gives penalty a timestep before end, but C++ will take over if not
-            # also drone should be flying under the time limit anyways
-            if (
-                (not self._done[i] and len(self.rewards[i]) >= self.max_episode_steps - 1) or 
-                (self._done[i] and self.cur_gate[i] < len(self.gates))
-                ):
-                self._done[i] = True
-                self._reward[i] -= 10
-    
+        # get coordinates in gate local space:
+        # idx 0 = left/right offset from gate center
+        # idx 1 = distance along the approach axis (forward/backward)
+        # idx 2 = up/down offset from gate center
+        gate_vecs_all = self.gates[None, :, :] - self.drone_pos[:, None, :]
+        local_all = np.einsum('gji,ngj->ngi', self.rot_mats, gate_vecs_all)  # rotmat_gate.T @ gate_dir
+        on_plane_all = np.abs(local_all[:, :, 1]) < self.gate_depth
+        in_opening_all = (
+            (np.abs(local_all[:, :, 0]) < self.score_half) &
+            (np.abs(local_all[:, :, 2]) < self.score_half)
+        )
+        
+        # --------------------
+        # FIND WHETHER DRONE HIT FRAME AND REWARD ACCORDINGLY 
+        # --------------------
+        frame_hit = on_plane_all & (~in_opening_all)
+        n_hits = frame_hit.sum(axis=1)
+        active = (~self._done) & (self.cur_gate < len(self.gates))
+        if self.crash_det:
+            self._done[active & (n_hits > 0)] = True
+        else:
+            self._reward[active] += (-0.5 * n_hits[active]).astype(np.float32)
+            
+        # --------------------
+        # IF WENT THROUGH FRAME
+        # --------------------
+        env_idx = np.arange(self.num_envs)
+        cur = self.cur_gate.clip(max=len(self.gates) - 1)
+        local_cur = local_all[env_idx, cur]
+        
+        entry_plane = (local_cur[:, 1] >= 0) & (local_cur[:, 1] < self.gate_depth)
+        in_opening_cur = (np.abs(local_cur[:, 0]) < self.score_half) & (np.abs(local_cur[:, 2]) < self.score_half)
+        threaded = active & entry_plane & in_opening_cur
+        
+        offset_bonus = self.offset_coef * (1.0 - (local_cur[:, 0]/self.half_w)**2 - (local_cur[:,2]/self.half_h)**2)
+        self._reward[threaded] += self.gate_bonus + offset_bonus[threaded]
+        self.cur_gate[threaded] += 1
+        
+        # if not at end, set prev dir and re-update obs since it will be stale
+        not_end = threaded & (self.cur_gate < len(self.gates))
+        self._prev_gate_dir[not_end] = self.gates[self.cur_gate[not_end]] - self.drone_pos[not_end]
+        if not self.vision_model and threaded.any():
+            self.gate_crossed = True
+        else:
+            self.prev_gate_crossed[not_end] = self._full_obs[not_end, 0:3]
+        
+        # --------------------
+        # SET DONE FLAG + GIVE TIME-BASED BONUS IF COMPLETION
+        # --------------------
+        finished = self.cur_gate >= len(self.gates)
+        self._done[finished] = True
+        ep_lens = np.array([len(self.rewards[i]) for i in range(self.num_envs)], dtype=np.float32)
+        comp_bonus = 50 + 25 * (1.0 - ep_lens / self.max_episode_steps)
+        self._reward[finished] += comp_bonus[finished]
+        
+        # --------------------
+        # GIVE PENALTY IF UNCOMPLETE COURSE, TIMEOUT
+        # --------------------
+        # rudimentary way for timeout since it gives penalty a timestep before end, but C++ will take over if not
+        # also drone should be flying under the time limit anyways
+        timed_out = (
+            (~self._done & (ep_lens >= self.max_episode_steps - 1)) | 
+            (self._done & (self.cur_gate < len(self.gates))))
+        self._done[timed_out] = True
+        self._reward[timed_out] -= 10
 
     def _update_observation(self, action: np.ndarray):
         """Updates observations recieved from C++ wrapper."""
