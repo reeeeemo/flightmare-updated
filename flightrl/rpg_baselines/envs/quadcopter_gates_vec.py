@@ -99,10 +99,10 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         # REWARD COEFFICIENTS
         # ------------------------------------
-        self.lin_vel_coef = 1 #if phase != 3 else 0
-        self.ang_vel_coef = -0.001 #if phase != 3 else 0
+        self.lin_vel_coef = 1
+        self.ang_vel_coef = -0.001
         self.act_coef = -0.01 if phase != 3 else -0.1
-        self.offset_coef = 0 #if phase != 3 else 2 # og was phase in (2, 3)
+        self.offset_coef = 0
         self.perception_coef = -0.01 if phase != 3 else -0.1
         self.gate_bonus = 10 if phase != 3 else 30
 
@@ -119,11 +119,15 @@ class QuadcopterGatesVec(VecEnv):
         self.gates = np.zeros((0, 3), dtype=np.float32)
         self.cur_gate = np.zeros(self.num_envs, dtype=int)
         self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
-        self._lowest_z = 2.0 + (2.0*phase)
         self.flat_probability = [0.8, 0.6, 0.4][phase-1]
         
         # for vision inference
         self.prev_gate_crossed = np.zeros((self.num_envs, 3), dtype=np.float32)
+
+        # ---------- FLOOR / WALL BORDERS BASED ON GATE POS/ROTS ----------
+        self._lowest_z = 2.0 + (2.0*phase)
+        self.wall_xmin = 0.0
+        self.wall_xmax = 0.0
 
         # ------------------------------------
         # CAMERA VARIABLES
@@ -203,6 +207,13 @@ class QuadcopterGatesVec(VecEnv):
             sink = first_step & (action[:, 0] < 0)
             self._reward[sink] -= 10
             self._done[sink] = True
+        
+        # ------------------------------------
+        # INSTA-FAIL IF DRONE HITS WALL BOUNDARIES
+        # ------------------------------------
+        out = ((self.drone_pos[:, 0] < self.wall_xmin) | (self.drone_pos[:, 0] > self.wall_xmax)) & (~self._done)
+        self._reward[out] -= 10
+        self._done[out] = True
         
         # ------------------------------------
         # GATE INDICES 
@@ -635,6 +646,10 @@ class QuadcopterGatesVec(VecEnv):
         self.wrapper.addGate(positions, rotations)
         self.gates = positions.copy()
         self.rot_mats = self.convert_quat_to_rot_mat(rotations.copy())
+        
+        # compute min and max wall distances
+        self.wall_xmin = min(self.gates[:, 0].min(), 0.0) - np.random.uniform(3.0, 6.0)
+        self.wall_xmax = max(self.gates[:, 0].max(), 0.0) + np.random.uniform(3.0, 6.0)
         
     def modifyResetPosition(self, positions: np.ndarray):
         """Modify min/max x,y,z positions for drone to initialize from.

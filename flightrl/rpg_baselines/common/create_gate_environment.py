@@ -49,7 +49,7 @@ def create_gates(n_gates: int = 1, phase: int = 1):
     # ---------------------
     for i in range(n_gates):
         old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
-        old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0'
+        old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0
         if phase == 1:
             # ---------- RANDOM X, Y RANGE ----------
             prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
