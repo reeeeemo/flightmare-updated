@@ -12,6 +12,7 @@ from stable_baselines3.ppo import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecNormalize
 from rpg_baselines.common.test_model import test_model
+from rpg_baselines.common.create_gate_environment import create_gates
 from rpg_baselines.envs.quadcopter_gates_vec import QuadcopterGatesVec
 import rpg_baselines.common.util as U
 from stable_baselines3.common.utils import LinearSchedule
@@ -178,66 +179,13 @@ def main():
         log_dir = rsg_root + '/saved'
         saver = U.ConfigurationSaver(log_dir=log_dir)
 
-    # add gates to environment
-    if args.r:
-        n_gates = np.random.randint(6, 14)
-        n_gates_arr = np.arange(n_gates)
-
-        # randomize positions / rotations
-        positions = np.zeros((n_gates, 3), dtype=np.float32)
-        rotations = np.zeros((n_gates, 4), dtype=np.float32)
-        flat_probability = [0.8, 0.6, 0.4][args.p-1]
-        lowest_margin = 2.0 + (2.0 * args.p)
-        for i in range(n_gates):
-            old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
-            old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0
-            old_pos_z = positions[i-1, 2] if i-1 >= 0 else 2
-            prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
-            #-5, 5 for p1, -12 12 for p2
-            random_x_range = (-5, 5) if args.p == 1 else (-8, 8)
-            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(*random_x_range)
-            #6-7 p1, 8-10 p2
-            random_y_range = [(6, 7), (8, 10), (12, 25)][args.p-1]
-            random_z_range = [(1, 2), (2, 3), (2, 3)][args.p-1]
-
-            positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range) # y always close but not intersecting/too close
-            random_z = np.random.uniform(*random_z_range)
-            
-            if np.random.random() < flat_probability:
-                positions[i, 2] = old_pos_z
-            else:
-                positions[i, 2] = np.random.uniform(old_pos_z-random_z, old_pos_z+random_z) #np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 2.0, np.inf)
-            
-            # new rot based on approach angle from cur gate + noise
-            approach_dx = positions[i, 0] - old_pos_x
-            approach_dy = positions[i, 1] - old_pos_y
-            random_yaw_range = (-np.pi/6, np.pi/6)
-            new_yaw = np.arctan2(-approach_dx, approach_dy) + np.random.uniform(*random_yaw_range)
-            new_yaw = np.clip(new_yaw, -np.pi/6, np.pi/6)
-            half = new_yaw / 2
-            
-            rotations[i, 0] = 1 if args.p == 1 else np.cos(half)
-            rotations[i, 3] = 0 if args.p == 1 else np.sin(half)
-        env.wrapper.setLowestZ(min(min(positions[:, 2]) - lowest_margin, -1.0))
-    else:
-        positions = np.array([
-            [0, 7.5, 7],
-            [0, 13.5, 10],
-            [3, 19.5, 12],
-            [9, 21.5, 12],
-            [15, 19.5, 12],
-            [18, 13.5, 10],
-            [18, 7.5, 7]
-        ], dtype=np.float32)
-        rotations = np.array([
-            [1, 0, 0, 0],
-            [np.cos(np.pi/8), np.sin(np.pi/8), 0, 0], # tilted up
-            [-np.cos(np.pi/12), 0, 0, np.sin(np.pi/12)], # tiled right
-            [-np.cos(np.pi/4), 0, 0, np.sin(np.pi/4)], # right
-            [np.cos(np.pi/3), 0, 0, -np.sin(np.pi/3)], # tiled left
-            [np.cos(np.pi/12), np.sin(np.pi/12), 0, 0],
-            [1, 0, 0, 0]
-        ], dtype=np.float32)
+    # ---------------------------
+    # GATE ENVIRONMENT CREATION 
+    # ---------------------------
+    n_gates = np.random.randint(6, 14)
+    lowest_margin = 2.0 + (2.0 * args.p)
+    positions, rotations = create_gates(n_gates, args.p)
+    env.wrapper.setLowestZ(min(min(positions[:, 2]) - lowest_margin, -1.0))
 
     print(f"gate pos: {positions}")
     print(f"gate rot: {rotations}")

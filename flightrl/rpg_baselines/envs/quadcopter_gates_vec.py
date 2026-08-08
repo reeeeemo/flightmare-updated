@@ -1,6 +1,7 @@
 import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
+from rpg_baselines.common.create_gate_environment import create_gates
 from collections import deque
 import cv2
 from ultralytics import YOLO
@@ -725,45 +726,7 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         # POSITION / ROTATION RANDOMIZATION
         # ------------------------------------
-        positions = np.zeros((n_gates, 3), dtype=np.float32)
-        rotations = np.zeros((n_gates, 4), dtype=np.float32)
-        for i in range(n_gates):
-            old_pos_x = positions[i-1, 0] if i-1 >= 0 else 0
-            old_pos_y = positions[i-1, 1] if i-1 >= 0 else 0
-            old_pos_z = positions[i-1, 2] if i-1 >= 0 else 2
-            
-            # ---------- RANDOM X RANGE ----------
-            # keep x close to old position and smooth so no insane angles drone has to cross
-            prev_dx = positions[i-1, 0] - positions[i-2, 0] if i >= 2 else 0
-            random_x_range = (-5, 5) if self.phase == 1 else (-8, 8)
-            positions[i, 0] = old_pos_x + prev_dx * 0.4 + np.random.uniform(*random_x_range)
-            
-            # ---------- RANDOM Y RANGE ----------
-            # keep y close to old position but not too close.
-            random_y_range = [(6, 7), (8, 10), (12, 25)][self.phase-1]
-            positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range)
-            
-            # ---------- RANDOM Z RANGE ----------
-            random_z_range = [(1, 2), (2, 3), (2, 3)][self.phase-1]
-            random_z = np.random.uniform(*random_z_range)
-            
-            # ---------- FLAT PROBABILITY (no z range adjust) ----------
-            if np.random.random() < self.flat_probability:
-                positions[i, 2] = old_pos_z
-            else:
-                positions[i, 2] = np.random.uniform(old_pos_z-random_z, old_pos_z+random_z) #np.clip(np.random.uniform(old_pos_z-4, old_pos_z+4), 2.0, np.inf)
-            
-            # ---------- RANDOM ROTATION ----------
-            # based on approach angle from current gate so no angle exceeds 45 degrees
-            # only is activated during phases 2 and above.
-            approach_dx = positions[i, 0] - old_pos_x
-            approach_dy = positions[i, 1] - old_pos_y
-            random_yaw_range = (-np.pi/6, np.pi/6)
-            new_yaw = np.arctan2(-approach_dx, approach_dy) + np.random.uniform(*random_yaw_range)
-            new_yaw = np.clip(new_yaw, -np.pi/6, np.pi/6)
-            half = new_yaw / 2
-            rotations[i, 0] = 1 if self.phase == 1 else np.cos(half)
-            rotations[i, 3] = 0 if self.phase == 1 else np.sin(half)      
+        positions, rotations = create_gates(n_gates, self.phase)
             
         # ---------- C++ WRAPPER CALLBACKS ----------
         self.addGate(positions, rotations)
