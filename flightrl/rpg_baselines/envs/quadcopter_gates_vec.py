@@ -171,7 +171,6 @@ class QuadcopterGatesVec(VecEnv):
         # CURRICULUM LEARNING VARIABLES
         # ------------------------------------
         self.ep_successes = deque(maxlen=max_memory_space)
-        self.randomize_gates = False
         self.n_gates = init_gate_num
         self.start_gate = init_gate_num
         self.n_gates_target = target_gate_num
@@ -182,10 +181,10 @@ class QuadcopterGatesVec(VecEnv):
 
         # ------------------------------------
         # VISION INFERENCE VARS
+        # ------------------------------------
         self._last_imgs = np.zeros((self.num_envs, 640, 360, 3), dtype=np.float32)
         self.filtered_gate = [None for _ in range(self.num_envs)]
         self.filtered_corners = [None for _ in range(self.num_envs)]
-        # ------------------------------------
         
 
     def seed(self, seed=0):
@@ -701,16 +700,9 @@ class QuadcopterGatesVec(VecEnv):
         success_rate = sum(self.ep_successes) / len(self.ep_successes)
         
         # ----------
-        # lower rate cap -- num of gates should be max for this
-        # ----------
-        #if self.lower_cap and success_rate > self.p_target**self.n_gates:
-        #    self.ep_successes.clear()
-            
-        # ----------
         # randomize gate position / number of gates dependent on success rate
         # ----------
-        if self.randomize_gates:
-            self.set_random_rotation_gate(success_rate)
+        self.set_random_rotation_gate(success_rate)
     
     
     def set_random_rotation_gate(self, success_rate: float):
