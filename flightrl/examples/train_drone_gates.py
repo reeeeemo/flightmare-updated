@@ -32,7 +32,6 @@ from flightgym import QuadrotorEnv_v1
 #   --norm_weight <saved_quadcopter_normalization_stats> (can also use -wn)
 #   --camera <1/0> (default 0)
 #   --vision_weights <saved_vision_pt> (can also use --wv)
-#   --randomize <1/0> (default 0) (can also use --r)
 #   --build_dataset <1/0> (default 0) (can also use --bd)
 # Example:
 # python3 train_drone_gates.py
@@ -110,14 +109,10 @@ def parser():
                         help="To add a camera onto each environment for detections")
     parser.add_argument('--wv', '--vision_weights', type=str, default='',
                         help="vision weights for camera inference")
-    parser.add_argument('--r', '--randomize', type=int, default=0,
-                        help="randomize gates activated")
     parser.add_argument('--bd', '--build_dataset', type=int, default=0,
                         help="whether to build YOLO-style pose dataset")
     parser.add_argument('--p', '--phase', type=int, default=1,
-                        help="what phase of drone training (1, 2)")
-    parser.add_argument('--rt', '--reset_timesteps', type=int, default=0,
-                        help="whether to reset timesteps for a model or not")
+                        help="what phase of drone training (1, 2, 3)")
     parser.add_argument('--ct', '--crash_detection', type=int, default=0,
                         help="whether to use crash detection or not")
     parser.add_argument('--pl', '--pad_launch', type=int, default=1,
@@ -168,7 +163,6 @@ def main():
         is_rendering=args.render,
         pad_launch=args.pl
     )
-    env.randomize_gates = bool(args.r)
 
     # set random seed
     configure_random_seed(args.seed, env=env)
