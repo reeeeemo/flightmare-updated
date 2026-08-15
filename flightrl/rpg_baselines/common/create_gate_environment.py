@@ -1,7 +1,7 @@
 import numpy as np
 
 RANDOM_X_RANGE = (-5, 5)
-RANDOM_Y_RANGE = [(6, 7), (8, 10), (12, 25)]
+RANDOM_Y_RANGE = [(6, 7), (8, 10), (8, 14)]
 RANDOM_Z_RANGE = [(1, 2), (2, 3), (2, 3)]
 
 def create_gates(n_gates: int = 1, phase: int = 1):
@@ -40,8 +40,8 @@ def create_gates(n_gates: int = 1, phase: int = 1):
     max_bound = max_cross_w / 2 * np.random.uniform(0.85, 1.0)
 
     rand_heading = np.radians(np.random.uniform(55.0, 62.0)) * dev_frac
-    cur_heading = rand_heading * (1.0 if np.random.random() < 0.5 else -1.0)
-    original_heading = cur_heading
+    cur_heading = 0.0
+    original_heading = rand_heading * (1.0 if np.random.random() < 0.5 else -1.0)
     headings = np.zeros(n_gates)
     
     # ---------------------
@@ -59,11 +59,11 @@ def create_gates(n_gates: int = 1, phase: int = 1):
             positions[i, 1] = old_pos_y + np.random.uniform(*random_y_range)
         else:
             # ---------- RANDOM X, Y RANGE IN S SHAPE ----------
-            cur_heading += np.clip(original_heading-cur_heading, -max_gate_turn, max_gate_turn)
-            rand_noise = np.random.uniform(6.5, 8.0)
+            rand_noise = np.random.uniform(*random_y_range)
             positions[i, 0] = old_pos_x + (rand_noise * np.sin(cur_heading))
             positions[i, 1] = old_pos_y + (rand_noise * np.cos(cur_heading))
             headings[i] = cur_heading  # hold for future yaw rot
+            cur_heading += np.clip(original_heading-cur_heading, -max_gate_turn, max_gate_turn)
             
             # walks diagonally until max bound, then flips and cur head ramps down
             if (
