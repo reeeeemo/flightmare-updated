@@ -1,13 +1,15 @@
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.patches import Polygon
+from matplotlib.transforms import Affine2D
 import cv2
 from ultralytics import YOLO
 import torch
 import os
 from pathlib import Path
+from glob import glob
 
-from rpg_baselines.common.setup_logger import setup_logging
 
 def convert_to_yolo_kp_labels(env):
     """Convert known gate positions if they are in camera view to YOLO-style
@@ -80,7 +82,6 @@ def convert_to_yolo_kp_labels(env):
     
     return yolo_labels
 
-def convert_to_yolo_seg_labels(env):
     """Convert known gate positions if they are in camera view to YOLO-style
     segmentation masks for a dataset.
     """
@@ -147,7 +148,166 @@ def convert_to_yolo_seg_labels(env):
     
     return yolo_labels
     
+def plot_trajectory(half_w: float, 
+                    half_h: float, 
+                    gates: list,
+                    rots: list,
+                    data):
+    """Plot the overall trajectory and gate positions/rotations."""
+    traj = data.get("traj", None)
+    if traj is None:
+        return
+
+    fig, ax = plt.subplots(figsize=(10,8))
+
+    ### PIN TRAJECTORY ###
+    # cannot stack since diff lengths :p
+    for i, t in enumerate(traj):
+        ax.plot(
+            t[:, 0], t[:, 1], 
+            linewidth=2, label="π" if i==0 else None, 
+            color=f"C{i%10}", zorder=5, alpha=0.85
+        )
+        ax.scatter(
+            t[0, 0], t[0, 1], c="green", s=60,
+            marker="o", label="start" if i==0 else None, zorder=60
+        )
+        ax.scatter(
+            t[-1, 0], t[-1, 1], c="red", s=60,
+            marker="o", label="end" if i==0 else None, zorder=6
+        )
     
+    ### PIN GATES ###
+    # take the rotmat and find rotation as well on (x,y)
+    for i, (center, R) in enumerate(zip(gates, rots)):
+        right = R[:, 0] * half_w
+        up = R[:, 2] * half_h
+            
+        corners_3d = np.stack([
+            center - right + up,  # TL
+            center + right + up,  # TR
+            center + right - up,  # BR
+            center - right - up,  # BL  
+        ])
+        corners_2d = corners_3d[:, :2]
+        poly = Polygon(
+            corners_2d, closed=True,
+            facecolor="orange", alpha=1.0,
+            edgecolor="darkorange", linewidth=3.5,
+            label="gate" if i == 0 else None
+        )
+        ax.add_patch(poly)
+    
+    ### SET LABELS / FIGURE SETTINGS THEN SAVE ###
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
+        
+    plt.tight_layout()
+    plt.savefig(f"eval/traj.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    
+def plot_side_trajectory(half_h: float,
+                         gates: list,
+                         rots: list,
+                         data):
+    """Plot overall attitude-based trajectory of policy + gates."""
+    traj = data.get("traj")
+    if traj is None:
+        return
+    
+    fig, ax = plt.subplots(figsize=(24,3))
+    
+    for i, t in enumerate(traj):
+        ax.plot(
+            t[:, 1], t[:, 2],
+            linewidth=2, label="π" if i==0 else None, 
+            color=f"C{i%10}", zorder=5, alpha=0.85
+        )
+        ax.scatter(
+            t[0, 1], t[0, 2], c="green", s=60,
+            marker="o", label="start" if i==0 else None, zorder=60
+        )
+        ax.scatter(
+            t[-1, 1], t[-1, 2], c="red", s=60,
+            marker="o", label="end" if i==0 else None, zorder=6
+        )
+        
+    ### PIN GATES ###
+    # take the rotmat and find rotation as well on (x,y)
+    for i, (center, R) in enumerate(zip(gates, rots)):
+        up = R[:, 2] * half_h
+        
+        ax.plot([center[1], center[1]],
+                [center[2]-up[2], center[2]+up[2]],
+                color="darkorange", lw=4, label="gate" if i==0 else None)
+
+    ### SET LABELS / FIGURE SETTINGS THEN SAVE ###
+    ax.set_xlabel("Y Foward (m)")
+    ax.set_ylabel("Z up (m)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
+    ax.set_aspect("equal")
+
+    plt.tight_layout()
+    plt.savefig(f"eval/attitude_traj.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    
+    
+def plot_hits(half_w: float, 
+              half_h: float,
+              gates: list,
+              rots: list, 
+              data):
+    """Plot all gate crosses/hits by the trajectories the policy took."""
+    ### GET ALL DATA ###
+    hits = data.get("hits")
+    crosses = data.get("crosses")
+    if hits is None or crosses is None:
+        return
+    hits = np.stack(hits)
+    crosses = np.stack(crosses)
+
+    cols = min(4, len(gates))
+    rows = (len(gates) + cols - 1) // cols
+    
+    ### PLOT (X,Y) WHERE TRAJ HITS/THREADS GATE ###
+    fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 4*rows), squeeze=False)
+    for i, (center, R) in enumerate(zip(gates, rots)):
+        ax = axes[i // cols, i % cols]
+        ax.add_patch(plt.Rectangle(
+            (-half_w, -half_h), 2*half_w, 2*half_h,
+            fill=False, edgecolor="black", linewidth=2)
+        )
+        
+        hit = hits[:, i, :]
+        hit = hit[~np.isnan(hit).any(axis=1)]
+        if len(hit):
+            local = (hit - center) @ R
+            ax.scatter(local[:,0], local[:,2], c="red", s=30, alpha=0.7)
+        
+        cross = crosses[:, i, :]
+        cross = cross[~np.isnan(cross).any(axis=1)]
+        if len(cross):
+            local = (cross - center) @ R
+            ax.scatter(local[:,0], local[:,2], c="lime", s=25, alpha=0.7)
+        
+        ax.axhline(0, color="gray", ls="--", alpha=0.4)
+        ax.axvline(0, color="gray", ls="--", alpha=0.4)
+        ax.set_aspect("equal")
+        ax.set_title(f"Gate {i}")
+        ax.set_xlim(-half_w*1.3, half_w*1.3)
+        ax.set_ylim(-half_h*1.3, half_h*1.3)
+    
+    for j in range(i+1, rows*cols):
+        axes[j // cols, j % cols].axis("off")
+    
+    plt.tight_layout()
+    plt.savefig(f"eval/gate_spread.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
 def test_model(
         env, 
         model, 
@@ -172,14 +332,16 @@ def test_model(
         build_dataset (bool): whether to build dataset (cam must be true)
     """
     max_ep_length = env.max_episode_steps
-    logger = setup_logging(name=weight_path.replace(".zip", "_logger"), filename=weight_path.replace(".zip", ".log"))
-    
+    os.makedirs("eval", exist_ok=True)
+
     if render:
         env.connectUnity()
-
     if vision_weights != "":
         vis_model = YOLO(vision_weights)
 
+    # --------------------
+    # BUILD DATASET-SPECIFIC VARIABLES
+    # --------------------
     if build_dataset:
         base_dir = Path(weight_path.replace(".zip", f"_dataset"))
         dataset_iter = 0
@@ -194,40 +356,50 @@ def test_model(
         images_dir.mkdir(parents=True, exist_ok=True)
         labels_dir.mkdir(parents=True, exist_ok=True)
     
+    # --------------------
+    # ALL ROLLOUTS OF THE DRONE
+    # --------------------
     for n_roll in range(num_rollouts):
         obs, done, ep_len = env.reset(), False, 0
-
-        # create dataset if vid + dataset flags, else just video if flagged.
-        if vid:
-            if not build_dataset:
-                fourcc = cv2.VideoWriter_fourcc(*"XVID")
-                out = cv2.VideoWriter(
-                    weight_path.replace(".zip", f"_rollout_{n_roll}.avi"),
-                    fourcc, 30.0, (640, 360)
-                )
         
-        # inference of policy
+        # --------------------
+        # SETUP LOGGING VARIABLES PER ROLLOUT
+        # --------------------
+        traj = np.zeros((max_ep_length, 3), dtype=np.float32)
+        time_i = 0
+
+        # --------------------
+        # CREATE DATASET IF VIDEO/DATASET FLAGS
+        # --------------------
+        if vid and not build_dataset:
+            fourcc = cv2.VideoWriter_fourcc(*"XVID")
+            out = cv2.VideoWriter(
+                weight_path.replace(".zip", f"_rollout_{n_roll}.avi"),
+                fourcc, 30.0, (640, 360)
+            )
+        
+        # --------------------
+        # POLICY INFERENCE FOR ENTIRE EPISODE
+        # --------------------
         total_rew = 0
         while not (done or (ep_len >= max_ep_length)):
+            # policy input/output
             act, _ = model.predict(obs, deterministic=True)
-            obs, rew, done, infos = env.step(act) # act
-            
-            labels = ['gate_x','gate_y','gate_z',
-                'R00','R01','R02','R10','R11','R12','R20','R21','R22',
-                'vel_x','vel_y','vel_z','wx','wy','wz',
-                'pa0','pa1','pa2','pa3',
-                'c0x','c0y','c0z','c1x','c1y','c1z','c2x','c2y','c2z','c3x','c3y','c3z',
-                'next_x','next_y','next_z']
-            for l, v in zip(labels, env.venv._full_obs[0]):
-                logger.info(f"  {l}: {v:.3f}")
-                logger.info(f"  cur_gate: {env.venv.cur_gate[0]}")
-            
-            total_rew += rew
+            obs, rew, done, infos = env.step(act)
             ep_len += 1
-            # capture video output and perform an action based on flags
+            
+            # save variables for data analysis
+            traj[time_i] = env.drone_pos[0]
+            time_i += 1
+            total_rew += rew
+
+            # --------------------
+            # CAPTURE VIDEO OUTPUT
+            # --------------------
             if vid:
                 frame = np.array(env.venv.rgb_image[0], dtype=np.uint8)
                 if vision_weights:
+                    # compute inference and save to video.
                     results = vis_model(
                         frame, 
                         device=("cuda" if torch.cuda.is_available() else "cpu"),
@@ -235,6 +407,7 @@ def test_model(
                     )
                     out.write(results[0].plot())
                 elif build_dataset and ep_len % 25 == 0:
+                    # build labels from ground truth and write to YOLO-style pose estimation ds
                     labels = convert_to_yolo_kp_labels(env)
                     if labels:
                         cv2.imwrite(str(images_dir / f"{dataset_iter}_{n_roll}_{ep_len:010d}.jpg"), frame)
@@ -242,11 +415,37 @@ def test_model(
                             for line in labels:
                                 f.write(f"{line}\n")
                 elif not build_dataset:
+                    # just write frame raw from camera
                     out.write(frame)
+
+        # --------------------
+        # SAVE ALL VALS FROM CUR ROLLOUT TO COMPRESSED NUMPY FILE
+        # --------------------
+        np.savez_compressed(
+            f"eval/rollout_{n_roll:03d}.npz",
+            traj=traj[:time_i],
+            hits=infos[0]["episode"]["gate_hits"],
+            crosses=infos[0]["episode"]["gate_crosses"]
+        )
 
         if vid and not build_dataset:
             out.release()
         print(f"\n\nEpisode ended: step={ep_len}. gate={env.venv.cur_gate[0]}. rew={rew}\n\n")
 
+    # --------------------
+    # GRAPH ALL ROLLOUT DATA
+    # --------------------
+    gates = env.venv.gates.astype(np.float32)
+    rots = env.venv.rot_mats.astype(np.float32)
+    half_w, half_h = env.venv.half_w, env.venv.half_h
+    all_data = {"traj": [], "hits": [], "crosses": []}
+    for n_roll in range(num_rollouts):
+        data = np.load(f"eval/rollout_{n_roll:03d}.npz")
+        for k in all_data:
+            all_data[k].append(data[k])
+    plot_trajectory(half_w, half_h, gates, rots, all_data)
+    plot_side_trajectory(half_h, gates, rots, all_data)
+    plot_hits(half_w, half_h, gates, rots, all_data)
+        
     if render:
         env.disconnectUnity()

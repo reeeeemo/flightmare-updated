@@ -2,6 +2,7 @@ import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 from rpg_baselines.common.create_gate_environment import create_gates
+from rpg_baselines.common.vision_stack import VisionStack
 from collections import deque
 import cv2
 from ultralytics import YOLO
@@ -121,9 +122,6 @@ class QuadcopterGatesVec(VecEnv):
         self._prev_gate_dir = np.zeros((self.num_envs, 3), dtype=np.float32)
         self.flat_probability = [0.8, 0.6, 0.4][phase-1]
         
-        # for vision inference
-        self.prev_gate_crossed = np.zeros((self.num_envs, 3), dtype=np.float32)
-
         # ---------- FLOOR / WALL BORDERS BASED ON GATE POS/ROTS ----------
         self._lowest_z = 2.0 + (2.0*phase)
         self.wall_xmin = 0.0
@@ -134,8 +132,7 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         self.camera_penalty = np.zeros((self.num_envs), dtype=np.float32)
         self.use_cam = use_cam
-        self.vision_model = YOLO(vision_weights) if vision_weights else None
-        self.model_task = self.vision_model.task if vision_weights else ""
+        self.vision_stack = VisionStack(self.num_envs, vision_weights)
 
         self.object_points = np.array([  # inner depth: 0.75x0.75
             [-0.75, 0.75, 0], # top left
@@ -146,8 +143,8 @@ class QuadcopterGatesVec(VecEnv):
 
         # fx = 320 = fy since square pixels
         self.camera_matrix = np.array([
-            [320, 0, 320],
-            [0, 320, 180],
+            [180, 0, 320],
+            [0, 180, 180],
             [0, 0, 1]
         ], dtype=np.float32)
 
@@ -174,7 +171,7 @@ class QuadcopterGatesVec(VecEnv):
         self.n_gates = init_gate_num
         self.start_gate = init_gate_num
         self.n_gates_target = target_gate_num
-        self.p_target = 0.85
+        self.p_target = 0.85  # 85% per gate reliability has to be hit
         self.phase = phase
         self.injection_rate = 0.75
         self.training_seeds = [1, 20, 40, 0, 3, 6, 9, 7]
@@ -186,6 +183,11 @@ class QuadcopterGatesVec(VecEnv):
         self.filtered_gate = [None for _ in range(self.num_envs)]
         self.filtered_corners = [None for _ in range(self.num_envs)]
         
+        # ------------------------------------
+        # DATA ANALYSIS VARIABLES
+        # ------------------------------------
+        self.gate_hits = np.full((self.num_envs, self.n_gates_target, 3), np.nan, dtype=np.float32)
+        self.gate_crosses = np.full((self.num_envs, self.n_gates_target, 3), np.nan, dtype=np.float32)
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -198,10 +200,12 @@ class QuadcopterGatesVec(VecEnv):
         Returns:
             reward based on drone observation state and current action
         """
+        ep_lens = np.array([len(self.rewards[i]) for i in range(self.num_envs)], dtype=np.int16)
+
         # ------------------------------------
         # INSTA-FAIL IF PAD LAUNCHING AND DOWNWARD FIRST CMD
         # ------------------------------------
-        if self.pad_launch:
+        if self.pad_launch and not self.vision_stack.is_enabled():
             first_step = np.array([len(self.rewards[i]) == 0 for i in range(self.num_envs)])
             sink = first_step & (action[:, 0] < 0)
             self._reward[sink] -= 10
@@ -286,6 +290,8 @@ class QuadcopterGatesVec(VecEnv):
             self._done[active & (n_hits > 0)] = True
         else:
             self._reward[active] += (-0.5 * n_hits[active]).astype(np.float32)
+            hit = active & (n_hits > 0)
+            self.gate_hits[hit, self.cur_gate[hit]] = self.drone_pos[hit]
             
         # --------------------
         # IF WENT THROUGH FRAME
@@ -300,22 +306,22 @@ class QuadcopterGatesVec(VecEnv):
         
         offset_bonus = self.offset_coef * (1.0 - (local_cur[:, 0]/self.half_w)**2 - (local_cur[:,2]/self.half_h)**2)
         self._reward[threaded] += self.gate_bonus + offset_bonus[threaded]
+        self.gate_crosses[threaded, self.cur_gate[threaded]] = self.drone_pos[threaded]
         self.cur_gate[threaded] += 1
         
         # if not at end, set prev dir and re-update obs since it will be stale
         not_end = threaded & (self.cur_gate < len(self.gates))
         self._prev_gate_dir[not_end] = self.gates[self.cur_gate[not_end]] - self.drone_pos[not_end]
-        if not self.vision_model and threaded.any():
+        if not self.vision_stack.is_enabled() and threaded.any():
             self.gate_crossed = True
         else:
-            self.prev_gate_crossed[not_end] = self._full_obs[not_end, 0:3]
+            self.vision_stack.set_prev_gate(not_end, self._full_obs[not_end, 0:3])
         
         # --------------------
         # SET DONE FLAG + GIVE TIME-BASED BONUS IF COMPLETION
         # --------------------
         finished = self.cur_gate >= len(self.gates)
         self._done[finished] = True
-        ep_lens = np.array([len(self.rewards[i]) for i in range(self.num_envs)], dtype=np.float32)
         comp_bonus = 50 + 25 * (1.0 - ep_lens / self.max_episode_steps)
         self._reward[finished] += comp_bonus[finished]
         
@@ -359,7 +365,7 @@ class QuadcopterGatesVec(VecEnv):
             self._last_imgs = self.wrapper.getRGBImage()
             frames = np.array(self._last_imgs, dtype=np.uint8)
 
-        if not self.vision_model:
+        if not self.vision_stack.is_enabled():
             ### noise training if requested else priviledged learning ###
             add_noise = np.random.uniform(0, 1) < self.injection_rate
             noise = np.zeros(12)
@@ -384,7 +390,7 @@ class QuadcopterGatesVec(VecEnv):
             # ------------------------------------
             # CAMERA DEVIATION -- FOV HOLD // 30 HZ FROZEN
             # ------------------------------------
-            if self.phase == 3:
+            if self.phase >= 2:
                 steps = np.array([len(self.rewards[i]) for i in range(self.num_envs)])
                 fresh = (steps % 4 == 0)  # 120 / 30 = every 4 timesteps fresh vals
 
@@ -406,108 +412,19 @@ class QuadcopterGatesVec(VecEnv):
 
         elif frames.size != 0:
             # propagate prev gate that was crossed by velocity.
-            mask = np.any(self.prev_gate_crossed, axis=1)
-            self.prev_gate_crossed[mask] -= self._full_obs[mask, 12:15] * self.sim_dt
-
-            # use onboard camera + vision model if cam can render
-            results = self.vision_model(
-                list(frames),
-                device=("cuda" if torch.cuda.is_available() else "cpu"),
-                verbose=False,
-                conf=0.5
+            ( n_filtered_corners, n_filtered_xyzs) = self.vision_stack.get_gate(
+                frames = frames, 
+                rotation = self._full_obs[:, 3:12], 
+                velocity = self._full_obs[:, 12:15],
+                sim_dt = self.sim_dt,
+                cur_gate = self._full_obs[:, 0:3],
+                cur_corners = self._full_obs[:, 22:34]
             )
-                
-            # get most confident gate segmentation mask to transform
-            for env_idx, result in enumerate(results):
-                n_det = len(result.boxes)
-                if n_det == 0:
-                    vb = self._full_obs[env_idx, 12:15]
-                    self._full_obs[env_idx, 22:34] -= np.tile(vb, 4) * self.sim_dt
-                    self._full_obs[env_idx, 0:3] -= vb * self.sim_dt
-                    continue
-                
-                best_2 = (result.boxes.xywh[:, 2] * result.boxes.xywh[:, 3]).argsort(descending=True)[:2]
-                cur_success = False
-                for i, best in enumerate(best_2):
-                    # --------------------
-                    # GET KEYPOINTS OR DERIVE FROM SEGMENTATION MASKS
-                    # MUST BE IN FORM [TL, TR, BR, BL]
-                    # --------------------
-                    if self.vision_model.task == "pose":
-                        kp_2d = result.keypoints.xy[best].cpu().numpy().astype(np.float32)
-                    else:
-                        pts = result.masks.xy[best].astype(np.float32)
-                        rect = cv2.minAreaRect(pts)
-                        print("box px:", rect[1])
-                        
-                        box = cv2.boxPoints(rect)
-                        box = box[np.argsort(box[:, 1])]
-                        top = box[:2]
-                        bot = box[2:]
-                        TL, TR = top[np.argsort(top[:, 0])]
-                        BL, BR = bot[np.argsort(bot[:, 0])]
-                        kp_2d = np.array([TL, TR, BR, BL], dtype=np.float32)
-                        
-                    if len(kp_2d) != 4:
-                        continue
-                    
-                    # --------------------
-                    # PNP TRANSLATION FROM 2D OBJECT POSE TO 3D CAM POS
-                    # --------------------
-                    try:
-                        success, rot_vec, trans_vec = cv2.solvePnP(
-                            self.object_points.reshape(4,1,3), 
-                            kp_2d.reshape(4,1,2) if self.model_task == "pose" else kp_2d, 
-                            self.camera_matrix, 
-                            None,
-                            flags=cv2.SOLVEPNP_IPPE_SQUARE
-                        )
-                    except cv2.error:
-                        continue
+            
+            self._full_obs[:, 0:3] = n_filtered_xyzs
+            self._full_obs[:, 22:34] = n_filtered_corners
 
-                    # check for detection being in front of drone
-                    if success and trans_vec[2] <= 2:
-                        success = False
-                        continue
-                    if success:
-                        # transform from 3d camera local pos to drone local pos
-                        # first convert points to camera space
-                        rot_mat, _ = cv2.Rodrigues(rot_vec)
-                        corners_cam = (rot_mat @ self.object_points.T + trans_vec).T
-                        
-                        # 20 deg camera tilt + 0.3 z axis translations
-                        corners_body = (self.R_body_cam @ corners_cam.T).T + np.array([0, 0, 0.3])
-                        R_world = self._full_obs[env_idx, 3:12].reshape(3, 3)
-                        corners_world = (R_world @ corners_body.T).T
-                        
-                        cand = corners_world.mean(axis=0)
-                        
-                        # --------------------
-                        # DON'T USE PREV GATE THAT WAS CROSSED
-                        # --------------------
-                        if (np.any(self.prev_gate_crossed[env_idx]) and 
-                            np.linalg.norm(cand - self.prev_gate_crossed[env_idx]) <= 2.5):
-                            continue
-                        
-                        # on success set cur gate
-                        if not cur_success:
-                            # ----------
-                            # SET CUR GATE
-                            # ----------
-                            if self.filtered_gate[env_idx] is None:
-                                self.filtered_gate[env_idx] = cand.copy()
-                            else:
-                                self.filtered_gate[env_idx] = np.asarray(self.filtered_gate[env_idx], float).copy()
-                                self.filtered_gate[env_idx][:2] = cand[:2]
-                            # -----------
-                            # SET CUR CORNERS
-                            # ----------
-                            self.filtered_corners[env_idx] = corners_world[[1, 0, 2, 3]].flatten()
 
-                            self._full_obs[env_idx, 22:34] = self.filtered_corners[env_idx]
-                            self._full_obs[env_idx, 0:3] = self.filtered_gate[env_idx]
-                            cur_success=True
-                        
     def step(self, action: np.ndarray):
         """Computes step of drone in environment.
 
@@ -551,18 +468,23 @@ class QuadcopterGatesVec(VecEnv):
                 eplen = len(self.rewards[i])
                 eprew = sum(self.rewards[i])
                 self.ep_successes.append(self.cur_gate[i] >= len(self.gates))
-                epinfo = {"r": eprew, "l": eplen}
+                epinfo = {
+                    "r": eprew, "l": eplen,
+                    "gate_hits": self.gate_hits[i].copy(),
+                    "gate_crosses": self.gate_crosses[i].copy()
+                }
                 info[i]['episode'] = epinfo
                 self.rewards[i].clear()
 
         # ------------------------------------
         # RESET COMMANDS FOR MULTI-ENVS
         # ------------------------------------
-        n = self._done.sum()
+        #n = self._done.sum()
         self._prev_action[self._done] = 0
         self.cur_gate[self._done] = 0
-        self.prev_gate_crossed[self._done] = 0
-        if self.phase == 3:
+        self.gate_hits[self._done] = np.nan
+        self.gate_crosses[self._done] = np.nan
+        if self.phase >= 2:
             self._seen_cur_gate[self._done] = 0
             self._seen_xyz_corners[self._done] = 0
             self._cur_gate_drift[self._done] = 0
