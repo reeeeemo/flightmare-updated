@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.patches import Polygon
 from matplotlib.transforms import Affine2D
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
 import cv2
 from ultralytics import YOLO
 import torch
@@ -10,11 +12,19 @@ import os
 from pathlib import Path
 from glob import glob
 
+def compute_speeds(trajectories: list, sim_dt: float):
+    """Returns speeds of all trajectories.
+    
+    Computes magnitude of shifts in values per timestep.
+    """
+    all_speeds = [np.linalg.norm(np.diff(t, axis=0), axis=1) / sim_dt for t in trajectories]
+    vmax = max((s.max() for s in all_speeds if len(s)), default=1.0)
+    norm = Normalize(0, vmax)
+    return all_speeds, norm
 
 def convert_to_yolo_kp_labels(env):
     """Convert known gate positions if they are in camera view to YOLO-style
     pose estimation positions for a dataset."""
-    
     fx = 180 
     fy = 180
     img_w = 640
@@ -45,14 +55,14 @@ def convert_to_yolo_kp_labels(env):
         p_cam = (env.venv.R_body_cam.T @ p_body_offset.T).T
         
         # forward axis
-        if (np.all(p_cam[:, 2] > 0)):
+        if (np.all(p_cam[:, 2] > 2)):
             # camera local pos projected to image pixels
             u = 320 + fx * p_cam[:, 0] / p_cam[:, 2]
             v = 180 + fy * p_cam[:, 1] / p_cam[:, 2]
             # per corner bool mask, normalize & check visibility
             in_bounds = (u >= 0) & (u <= 640) & (v >= 0) & (v <= 360)
             
-            if np.sum(in_bounds) >= 2:
+            if np.sum(in_bounds) >= 3:
                 # grab all in bound coordinates, normalize
                 u_vis = u[in_bounds]
                 v_vis = v[in_bounds]
@@ -150,24 +160,27 @@ def convert_to_yolo_kp_labels(env):
     
 def plot_trajectory(half_w: float, 
                     half_h: float, 
+                    sim_dt: float,
                     gates: list,
                     rots: list,
-                    data):
+                    data,):
     """Plot the overall trajectory and gate positions/rotations."""
     traj = data.get("traj", None)
     if traj is None:
         return
-
     fig, ax = plt.subplots(figsize=(10,8))
+    
+    ### COMPUTE SPEEDS OF TRAJECTORY ###
+    all_speeds, norm = compute_speeds(traj, sim_dt)
 
     ### PIN TRAJECTORY ###
     # cannot stack since diff lengths :p
-    for i, t in enumerate(traj):
-        ax.plot(
-            t[:, 0], t[:, 1], 
-            linewidth=2, label="π" if i==0 else None, 
-            color=f"C{i%10}", zorder=5, alpha=0.85
-        )
+    for i, (t, speed) in enumerate(zip(traj, all_speeds)):
+        pts = t[:, [0, 1]].reshape(-1, 1, 2)
+        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+        lc = LineCollection(segs, cmap="viridis", norm=norm, array=speed, linewidth=2)
+        ax.add_collection(lc)
+
         ax.scatter(
             t[0, 0], t[0, 1], c="green", s=60,
             marker="o", label="start" if i==0 else None, zorder=60
@@ -204,12 +217,16 @@ def plot_trajectory(half_w: float,
     ax.set_ylabel("Y (m)")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
+    
+    fig.colorbar(lc, ax=ax, label="speed (m/s)")
+    ax.autoscale()
         
     plt.tight_layout()
     plt.savefig(f"eval/traj.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     
 def plot_side_trajectory(half_h: float,
+                         sim_dt: float,
                          gates: list,
                          rots: list,
                          data):
@@ -220,12 +237,17 @@ def plot_side_trajectory(half_h: float,
     
     fig, ax = plt.subplots(figsize=(24,3))
     
-    for i, t in enumerate(traj):
-        ax.plot(
-            t[:, 1], t[:, 2],
-            linewidth=2, label="π" if i==0 else None, 
-            color=f"C{i%10}", zorder=5, alpha=0.85
-        )
+    ### COMPUTE SPEEDS OF TRAJECTORY ###
+    all_speeds, norm = compute_speeds(traj, sim_dt)
+    
+    ### PIN TRAJECTORY ###
+    # cannot stack since diff lengths :p
+    for i, (t, speed) in enumerate(zip(traj, all_speeds)):
+        pts = t[:, [1, 2]].reshape(-1, 1, 2)
+        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+        lc = LineCollection(segs, cmap="viridis", norm=norm, array=speed, linewidth=2)
+        ax.add_collection(lc)
+
         ax.scatter(
             t[0, 1], t[0, 2], c="green", s=60,
             marker="o", label="start" if i==0 else None, zorder=60
@@ -234,7 +256,7 @@ def plot_side_trajectory(half_h: float,
             t[-1, 1], t[-1, 2], c="red", s=60,
             marker="o", label="end" if i==0 else None, zorder=6
         )
-        
+    
     ### PIN GATES ###
     # take the rotmat and find rotation as well on (x,y)
     for i, (center, R) in enumerate(zip(gates, rots)):
@@ -250,6 +272,9 @@ def plot_side_trajectory(half_h: float,
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
     ax.set_aspect("equal")
+    
+    fig.colorbar(lc, ax=ax, label="speed (m/s)")
+    ax.autoscale()
 
     plt.tight_layout()
     plt.savefig(f"eval/attitude_traj.png", dpi=150, bbox_inches="tight")
@@ -398,6 +423,9 @@ def test_model(
             # --------------------
             if vid:
                 frame = np.array(env.venv.rgb_image[0], dtype=np.uint8)
+                if frame.size == 0:
+                    continue
+
                 if vision_weights:
                     # compute inference and save to video.
                     results = vis_model(
@@ -443,8 +471,8 @@ def test_model(
         data = np.load(f"eval/rollout_{n_roll:03d}.npz")
         for k in all_data:
             all_data[k].append(data[k])
-    plot_trajectory(half_w, half_h, gates, rots, all_data)
-    plot_side_trajectory(half_h, gates, rots, all_data)
+    plot_trajectory(half_w, half_h, env.venv.sim_dt, gates, rots, all_data)
+    plot_side_trajectory(half_h, env.venv.sim_dt, gates, rots, all_data)
     plot_hits(half_w, half_h, gates, rots, all_data)
         
     if render:

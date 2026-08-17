@@ -102,7 +102,7 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         self.lin_vel_coef = 1
         self.ang_vel_coef = -0.001
-        self.act_coef = -0.01 if phase != 3 else -0.1
+        self.act_coef = -0.01
         self.offset_coef = 0
         self.perception_coef = -0.01 if phase != 3 else -0.1
         self.gate_bonus = 10 if phase != 3 else 30
@@ -316,6 +316,7 @@ class QuadcopterGatesVec(VecEnv):
             self.gate_crossed = True
         else:
             self.vision_stack.set_prev_gate(not_end, self._full_obs[not_end, 0:3])
+            self.vision_stack.reset_cur_gate(not_end)
         
         # --------------------
         # SET DONE FLAG + GIVE TIME-BASED BONUS IF COMPLETION
@@ -411,6 +412,7 @@ class QuadcopterGatesVec(VecEnv):
                 self._full_obs[has_deviated, 0:3] = self._seen_cur_gate[has_deviated] + self._cur_gate_drift[has_deviated]
 
         elif frames.size != 0:
+            
             # propagate prev gate that was crossed by velocity.
             ( n_filtered_corners, n_filtered_xyzs) = self.vision_stack.get_gate(
                 frames = frames, 

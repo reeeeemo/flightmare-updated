@@ -35,10 +35,14 @@ class VisionStack:
         ])
         
         self.prev_gate_crossed = np.zeros((n_envs, 3), dtype=np.float32)
+        self.cur_fixed_gate = np.zeros((n_envs, 3), dtype=np.float32)
         
     def set_prev_gate(self, env_idxs: np.ndarray, prev_gates: np.ndarray):
         """Sets any environment's previous gate to a vector XYZ."""
         self.prev_gate_crossed[env_idxs] = prev_gates
+    
+    def reset_cur_gate(self, env_idxs):
+        self.cur_fixed_gate[env_idxs] = np.zeros(3)
 
     def get_gate(self, 
                  frames: np.ndarray, 
@@ -59,7 +63,9 @@ class VisionStack:
         """
         # propagate prev gate that was crossed by velocity.
         mask = np.any(self.prev_gate_crossed, axis=1)
+        mask_cf = np.any(self.cur_fixed_gate, axis=1)
         self.prev_gate_crossed[mask] -= velocity[mask] * sim_dt
+        self.cur_fixed_gate[mask_cf] -= velocity[mask_cf] * sim_dt
 
         n_filtered_corners = np.zeros((self.n_envs, 12), dtype=np.float32)
         n_filtered_xyz = np.zeros((self.n_envs, 3), dtype=np.float32)
@@ -140,6 +146,13 @@ class VisionStack:
                     if (np.any(self.prev_gate_crossed[env_idx]) and 
                         np.linalg.norm(cand - self.prev_gate_crossed[env_idx]) <= 2.5):
                         continue
+                    
+                    # --------------------
+                    # DON'T DIVERGE FROM CURRENT GATE 
+                    # --------------------
+                    if (np.any(self.cur_fixed_gate[env_idx]) and 
+                        np.linalg.norm(cand - self.cur_fixed_gate[env_idx]) > 2.5):
+                        continue
                         
                     # on success set cur gate
                     if not cur_success:
@@ -147,6 +160,7 @@ class VisionStack:
                         # SET CUR GATE
                         # ----------
                         n_filtered_xyz[env_idx] = cand.copy()
+                        self.cur_fixed_gate[env_idx] = cand.copy()
                         # -----------
                         # SET CUR CORNERS
                         # ----------
