@@ -158,6 +158,44 @@ def convert_to_yolo_kp_labels(env):
     
     return yolo_labels
     
+def plot_residual(data):
+    """Plot difference between visual inference and GT gate values."""
+    gt_dist = np.concatenate(data.get("gt_dist"))
+    residual = np.concatenate(data.get("residual"))
+    
+    if gt_dist is None or residual is None:
+        return
+    fig, ax = plt.subplots(3, 1, sharex=True, figsize=(10,12))
+    
+    ### create bins for each plotted distance/inferenced model ###
+    # bins are built off of ground truth distance
+    edges = np.arange(0, gt_dist.max() + 1, 1.0)
+    bin_id = np.digitize(gt_dist, edges)
+    
+    ### compute means and standard deviations of each bin ###
+    for axis, axis_n in zip([0, 1, 2], ['x', 'y', 'z']):
+        means, stds, centers = [], [], []
+        for b in range(1, len(edges)):
+            m = (bin_id == b)
+            if m.sum() < 20: # no zero or sparse pts
+                continue
+            centers.append((edges[b-1] + edges[b]) / 2)
+            means.append(residual[m, axis].mean())
+            stds.append(residual[m, axis].std())
+            
+        centers, means, stds = np.array(centers), np.array(means), np.array(stds)
+        
+        ### plot bias line, error variance band ###
+        ax[axis].plot(centers, means, label=f"mean {axis_n} error")
+        ax[axis].fill_between(centers, means - stds, means + stds, alpha=0.3)
+        ax[axis].axhline(0, ls='--')
+        ax[axis].set_ylabel(f"vision - GT, {axis_n} (m)")
+        ax[axis].legend()
+
+    ax[2].set_xlabel("true gate distance (m)")
+    fig.suptitle("Vision error vs distance")
+    fig.savefig(f"eval/residual_all.png")
+
 def plot_trajectory(half_w: float, 
                     half_h: float, 
                     sim_dt: float,
@@ -391,6 +429,8 @@ def test_model(
         # SETUP LOGGING VARIABLES PER ROLLOUT
         # --------------------
         traj = np.zeros((max_ep_length, 3), dtype=np.float32)
+        residual = np.zeros((max_ep_length, 3), dtype=np.float32)
+        gt_dist = np.zeros(max_ep_length, dtype=np.float32)
         time_i = 0
 
         # --------------------
@@ -414,7 +454,12 @@ def test_model(
             ep_len += 1
             
             # save variables for data analysis
-            traj[time_i] = env.drone_pos[0]
+            drone_pos = env.venv.drone_pos[0]
+            gt_rel_gate = env.venv.gates[env.venv.cur_gate[0]] - drone_pos
+
+            traj[time_i] = drone_pos
+            residual[time_i] = env._full_obs[0, 0:3] - (gt_rel_gate)
+            gt_dist[time_i] = np.linalg.norm(gt_rel_gate)
             time_i += 1
             total_rew += rew
 
@@ -453,7 +498,9 @@ def test_model(
             f"eval/rollout_{n_roll:03d}.npz",
             traj=traj[:time_i],
             hits=infos[0]["episode"]["gate_hits"],
-            crosses=infos[0]["episode"]["gate_crosses"]
+            crosses=infos[0]["episode"]["gate_crosses"],
+            residual=residual[:time_i],
+            gt_dist=gt_dist[:time_i]
         )
 
         if vid and not build_dataset:
@@ -466,14 +513,16 @@ def test_model(
     gates = env.venv.gates.astype(np.float32)
     rots = env.venv.rot_mats.astype(np.float32)
     half_w, half_h = env.venv.half_w, env.venv.half_h
-    all_data = {"traj": [], "hits": [], "crosses": []}
+    all_data = {"traj": [], "hits": [], "crosses": [], "residual": [], "gt_dist": []}
     for n_roll in range(num_rollouts):
         data = np.load(f"eval/rollout_{n_roll:03d}.npz")
         for k in all_data:
             all_data[k].append(data[k])
+
     plot_trajectory(half_w, half_h, env.venv.sim_dt, gates, rots, all_data)
     plot_side_trajectory(half_h, env.venv.sim_dt, gates, rots, all_data)
     plot_hits(half_w, half_h, gates, rots, all_data)
+    plot_residual(all_data)
         
     if render:
         env.disconnectUnity()

@@ -77,10 +77,10 @@ def create_gates(n_gates: int = 1, phase: int = 1):
                 max_bound = max_cross_w / 2 * np.random.uniform(0.85, 1.0)
 
         # ----------- RANDOM Z RANGE (flat or not) ------------
-        old_pos_z = positions[i-1, 2] if i-1 >= 0 else 2
+        old_pos_z = positions[i-1, 2] if i-1 >= 0 else np.random.uniform(0, 1)
         random_z = np.random.uniform(*random_z_range)
         
-        if np.random.random() < flat_probability:
+        if np.random.random() < flat_probability or i == 0:
             positions[i, 2] = old_pos_z
         else:
             positions[i, 2] = np.random.uniform(old_pos_z-random_z, old_pos_z+random_z)

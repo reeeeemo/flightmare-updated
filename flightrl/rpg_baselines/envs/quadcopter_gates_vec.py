@@ -491,6 +491,9 @@ class QuadcopterGatesVec(VecEnv):
             self._seen_xyz_corners[self._done] = 0
             self._cur_gate_drift[self._done] = 0
             self._cur_xyz_drift[self._done] = 0
+        if self.vision_stack.is_enabled():
+            self.vision_stack.reset_cur_gate(self._done)
+            self.vision_stack.prev_gate_crossed[self._done] = 0
 
         return self._full_obs.copy(), self._reward.copy(), \
             self._done.copy(), info.copy()
