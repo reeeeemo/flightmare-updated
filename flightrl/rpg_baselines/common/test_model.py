@@ -5,7 +5,7 @@ import torch
 import os
 from pathlib import Path
 from glob import glob
-from plotting import Plotter
+from rpg_baselines.common.plotting import Plotter
 
 def test_model(
         env, 
@@ -150,7 +150,7 @@ def test_model(
     rots = env.venv.rot_mats.astype(np.float32)
     half_w, half_h = env.venv.half_w, env.venv.half_h
     data_keys = ["traj", "hits", "crosses", "residual", "gt_dist"]
-    data = [f"eval/rollout_n{n_roll:03d}.npz" for n_roll in range(num_rollouts)]
+    data = [f"eval/rollout_{n_roll:03d}.npz" for n_roll in range(num_rollouts)]
     
     plt = Plotter(gates, rots, env.venv.sim_dt, (half_w, half_h))
     plt.load_data(npz=data, keys=data_keys)

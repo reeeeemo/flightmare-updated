@@ -46,7 +46,7 @@ class Plotter:
     def plot_residual(self):
         """Plot difference between visual inference and GT gate values."""
         if "gt_dist" not in self.data or "residual" not in self.data:
-            continue
+            return
 
         gt_dist = np.concatenate(self.data.get("gt_dist"))
         residual = np.concatenate(self.data.get("residual"))

@@ -4,6 +4,23 @@ import cv2
 from ultralytics import YOLO
 
 class VisionStack:
+    """VisionStack class that uses pose estimation / segmentation to plot gates.
+    
+    Relies on PnP estimations filtered through a Kalman Filter. Assumes inner
+    corner positions are 0.75x0.75 and that camera (fx, fy) is (180, 180) (90 vFOV)
+    with a 20 degree tilt upwards.
+    
+    Attributes:
+        vision_model : YOLOv11 pose or segmentation model
+        device : Whether inference uses CUDA or CPU
+        confidence_threshold : Level at which to filter detections
+        n_envs : Number of environments to inference over
+        object_points : Inner corner positions (TL, TR, BR, BL order)
+        camera_matrix : Square camera projection matrix
+        R_body_cam : Transformation matrix from camera -> body
+        prev_gate_crossed : Previous gate position that was crossed
+        cur_fixed_gate : Current detected gate
+    """
     def __init__(self, n_envs: int, vision_weights: str):
         self.vision_model = YOLO(vision_weights) if vision_weights else None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -12,6 +29,7 @@ class VisionStack:
         self.n_envs = n_envs
         self.enabled = bool(self.vision_model != None)
         
+        ### TRANSFORMATION VARS ###
         self.object_points = np.array([  # inner depth: 0.75x0.75
             [-0.75, 0.75, 0], # top left
             [0.75, 0.75, 0], # top right
@@ -34,8 +52,15 @@ class VisionStack:
             [0, -np.cos(theta), np.sin(theta)],
         ])
         
+        ### VISION STABILITY VARS ###
         self.prev_gate_crossed = np.zeros((n_envs, 3), dtype=np.float32)
         self.cur_fixed_gate = np.zeros((n_envs, 3), dtype=np.float32)
+        
+        ### KALMAN FILTER VARS ###
+        self.P_xyz = np.full((n_envs, 3), 1e3)
+        self.P_corners = np.full((n_envs, 12), 1e3)
+        self.Q = 0.05 # ~0 processed noise during simulation of IMU estimates
+        self.R = 0.5  # measurement noise of vision
         
     def set_prev_gate(self, env_idxs: np.ndarray, prev_gates: np.ndarray):
         """Sets any environment's previous gate to a vector XYZ."""
@@ -43,6 +68,8 @@ class VisionStack:
     
     def reset_cur_gate(self, env_idxs):
         self.cur_fixed_gate[env_idxs] = np.zeros(3)
+        self.P_xyz[env_idxs] = 1e3
+        self.P_corners[env_idxs] = 1e3
 
     def get_gate(self, 
                  frames: np.ndarray, 
@@ -77,8 +104,11 @@ class VisionStack:
             conf=self.confidence_threshold
         )
         
+        # Estimate next state via current knowledge
         n_filtered_xyz = cur_gate - (velocity * sim_dt)
         n_filtered_corners = cur_corners - (np.tile(velocity, 4) * sim_dt)
+        self.P_xyz += self.Q
+        self.P_corners += self.Q
                 
         # get most confident gate segmentation mask to transform
         for env_idx, result in enumerate(results):
@@ -154,17 +184,22 @@ class VisionStack:
                         np.linalg.norm(cand - self.cur_fixed_gate[env_idx]) > 2.5):
                         continue
                         
-                    # on success set cur gate
+                    # on success set cur gate / corners
                     if not cur_success:
-                        # ----------
-                        # SET CUR GATE
-                        # ----------
-                        n_filtered_xyz[env_idx] = cand.copy()
-                        self.cur_fixed_gate[env_idx] = cand.copy()
-                        # -----------
-                        # SET CUR CORNERS
-                        # ----------
-                        n_filtered_corners[env_idx] = corners_world[[1, 0, 2, 3]].flatten()
+                        z_corners = corners_world[[1, 0, 2, 3]].flatten() - n_filtered_corners[env_idx]
+                        z_xyz = cand - n_filtered_xyz[env_idx]
+                        
+                        ### KALMAN FILTER ON CUR XYZ ###
+                        K = self.P_xyz[env_idx] / (self.P_xyz[env_idx] + self.R)
+                        n_filtered_xyz[env_idx] += K * z_xyz
+                        self.P_xyz[env_idx] *= (1 - K)
+                        self.cur_fixed_gate[env_idx] = n_filtered_xyz[env_idx]
+                        
+                        ### KALMAN FILTER ON CUR CORNERS ###
+                        Kc = self.P_corners[env_idx] / (self.P_corners[env_idx] + self.R)
+                        n_filtered_corners[env_idx] += Kc * z_corners
+                        self.P_corners[env_idx] *= (1 - Kc)
+    
                         cur_success=True
 
         return n_filtered_corners, n_filtered_xyz
