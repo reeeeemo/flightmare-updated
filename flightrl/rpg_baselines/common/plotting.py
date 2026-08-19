@@ -45,12 +45,16 @@ class Plotter:
 
     def plot_residual(self):
         """Plot difference between visual inference and GT gate values."""
-        if "gt_dist" not in self.data or "residual" not in self.data:
+        if not all(k in self.data for k in ["gt_dist", "residual", "detections"]):
             return
 
-        gt_dist = np.concatenate(self.data.get("gt_dist"))
-        residual = np.concatenate(self.data.get("residual"))
+        detections = np.concatenate(self.data.get("detections"))
+        gt_dist = np.concatenate(self.data.get("gt_dist"))[detections]
+        residual = np.concatenate(self.data.get("residual"))[detections]
         fig, ax = plt.subplots(3, 1, sharex=True, figsize=(10,12))
+        
+        if len(gt_dist) == 0:
+            return
         
         ### create bins for each plotted distance/inferenced model ###
         # bins are built off of ground truth distance

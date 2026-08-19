@@ -24,7 +24,7 @@ class VisionStack:
     def __init__(self, n_envs: int, vision_weights: str):
         self.vision_model = YOLO(vision_weights) if vision_weights else None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.confidence_threshold = 0.5
+        self.confidence_threshold = 0.7
         self.verbose = False
         self.n_envs = n_envs
         self.enabled = bool(self.vision_model != None)
@@ -55,6 +55,7 @@ class VisionStack:
         ### VISION STABILITY VARS ###
         self.prev_gate_crossed = np.zeros((n_envs, 3), dtype=np.float32)
         self.cur_fixed_gate = np.zeros((n_envs, 3), dtype=np.float32)
+        self.N = 3  # order of std-dev to allow during detections
         
         ### KALMAN FILTER VARS ###
         self.P_xyz = np.full((n_envs, 3), 1e3)
@@ -84,7 +85,7 @@ class VisionStack:
             frames: all frames gathered from camera
             R_world: 9D drone rotation matrix
         Returns:
-            n_dets: num envs, num detections
+            detected_gate: list of boolean that states whether vision detected and updated gate.
             n_filtered_corners: num envs, num (xyz, 4) corners
             n_filtered_xyz: num envs, num relative xyz to gate
         """
@@ -96,6 +97,7 @@ class VisionStack:
 
         n_filtered_corners = np.zeros((self.n_envs, 12), dtype=np.float32)
         n_filtered_xyz = np.zeros((self.n_envs, 3), dtype=np.float32)
+        detected_gate = np.zeros(self.n_envs, dtype=bool)
         
         results = self.vision_model(
             list(frames),
@@ -180,10 +182,15 @@ class VisionStack:
                     # --------------------
                     # DON'T DIVERGE FROM CURRENT GATE 
                     # --------------------
-                    if (np.any(self.cur_fixed_gate[env_idx]) and 
-                        np.linalg.norm(cand - self.cur_fixed_gate[env_idx]) > 2.5):
+                    # Only set new gate if distance is under tolerance
+                    # tolerance is the uncertainty * order_of_magnitude_allowed
+                    tol = min(self.N * np.sqrt(self.P_xyz[env_idx].max() + self.R), 4.0)
+                    if (
+                        np.any(self.cur_fixed_gate[env_idx]) and
+                        np.linalg.norm(cand - n_filtered_xyz[env_idx]) > tol
+                    ):
                         continue
-                        
+
                     # on success set cur gate / corners
                     if not cur_success:
                         z_corners = corners_world[[1, 0, 2, 3]].flatten() - n_filtered_corners[env_idx]
@@ -201,8 +208,9 @@ class VisionStack:
                         self.P_corners[env_idx] *= (1 - Kc)
     
                         cur_success=True
+                        detected_gate[env_idx] = True
 
-        return n_filtered_corners, n_filtered_xyz
+        return detected_gate, n_filtered_corners, n_filtered_xyz
     
     def is_enabled(self):
         return self.enabled

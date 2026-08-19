@@ -188,6 +188,7 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         self.gate_hits = np.full((self.num_envs, self.n_gates_target, 3), np.nan, dtype=np.float32)
         self.gate_crosses = np.full((self.num_envs, self.n_gates_target, 3), np.nan, dtype=np.float32)
+        self.detected_gate = np.zeros(self.num_envs, dtype=bool)
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
@@ -317,6 +318,14 @@ class QuadcopterGatesVec(VecEnv):
         else:
             self.vision_stack.set_prev_gate(not_end, self._full_obs[not_end, 0:3])
             self.vision_stack.reset_cur_gate(not_end)
+            
+            vel = self._full_obs[not_end, 12:15]
+            speed = np.linalg.norm(vel)
+            fwd_axis = self._full_obs[not_end, 3:12].reshape(-1, 3, 3)[:, :, 1]
+            fwd = np.where(speed >= 1e-3, vel / np.maximum(speed, 1e-6), fwd_axis)
+            seed = fwd * 8.0
+            self._full_obs[not_end, 0:3] = seed
+            self._full_obs[not_end, 22:34] = np.tile(seed, 4)
         
         # --------------------
         # SET DONE FLAG + GIVE TIME-BASED BONUS IF COMPLETION
@@ -414,7 +423,7 @@ class QuadcopterGatesVec(VecEnv):
         elif frames.size != 0:
             
             # propagate prev gate that was crossed by velocity.
-            ( n_filtered_corners, n_filtered_xyzs) = self.vision_stack.get_gate(
+            ( det_gate, n_filtered_corners, n_filtered_xyzs) = self.vision_stack.get_gate(
                 frames = frames, 
                 rotation = self._full_obs[:, 3:12], 
                 velocity = self._full_obs[:, 12:15],
@@ -425,6 +434,7 @@ class QuadcopterGatesVec(VecEnv):
             
             self._full_obs[:, 0:3] = n_filtered_xyzs
             self._full_obs[:, 22:34] = n_filtered_corners
+            self.detected_gate = det_gate
 
 
     def step(self, action: np.ndarray):
@@ -481,7 +491,6 @@ class QuadcopterGatesVec(VecEnv):
         # ------------------------------------
         # RESET COMMANDS FOR MULTI-ENVS
         # ------------------------------------
-        #n = self._done.sum()
         self._prev_action[self._done] = 0
         self.cur_gate[self._done] = 0
         self.gate_hits[self._done] = np.nan

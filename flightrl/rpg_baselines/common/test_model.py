@@ -66,6 +66,7 @@ def test_model(
         # --------------------
         traj = np.zeros((max_ep_length, 3), dtype=np.float32)
         residual = np.zeros((max_ep_length, 3), dtype=np.float32)
+        detections = np.zeros(max_ep_length, dtype=bool)
         gt_dist = np.zeros(max_ep_length, dtype=np.float32)
         time_i = 0
 
@@ -94,8 +95,9 @@ def test_model(
             gt_rel_gate = env.venv.gates[env.venv.cur_gate[0]] - drone_pos
 
             traj[time_i] = drone_pos
-            residual[time_i] = env._full_obs[0, 0:3] - (gt_rel_gate)
+            residual[time_i] = env.venv._full_obs[0, 0:3] - (gt_rel_gate)
             gt_dist[time_i] = np.linalg.norm(gt_rel_gate)
+            detections[time_i] = env.venv.detected_gate[0]
             time_i += 1
             total_rew += rew
 
@@ -112,7 +114,8 @@ def test_model(
                     results = vis_model(
                         frame, 
                         device=("cuda" if torch.cuda.is_available() else "cpu"),
-                        verbose=False
+                        verbose=False,
+                        conf=0.7
                     )
                     out.write(results[0].plot())
                 elif build_dataset and ep_len % 25 == 0:
@@ -136,7 +139,8 @@ def test_model(
             hits=infos[0]["episode"]["gate_hits"],
             crosses=infos[0]["episode"]["gate_crosses"],
             residual=residual[:time_i],
-            gt_dist=gt_dist[:time_i]
+            gt_dist=gt_dist[:time_i],
+            detections=detections[:time_i]
         )
 
         if vid and not build_dataset:
@@ -149,7 +153,7 @@ def test_model(
     gates = env.venv.gates.astype(np.float32)
     rots = env.venv.rot_mats.astype(np.float32)
     half_w, half_h = env.venv.half_w, env.venv.half_h
-    data_keys = ["traj", "hits", "crosses", "residual", "gt_dist"]
+    data_keys = ["traj", "hits", "crosses", "residual", "gt_dist", "detections"]
     data = [f"eval/rollout_{n_roll:03d}.npz" for n_roll in range(num_rollouts)]
     
     plt = Plotter(gates, rots, env.venv.sim_dt, (half_w, half_h))
