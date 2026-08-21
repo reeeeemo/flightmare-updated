@@ -7,6 +7,76 @@ from pathlib import Path
 from glob import glob
 from rpg_baselines.common.plotting import Plotter
 
+def convert_to_yolo_kp_labels(env):
+    """Convert known gate positions if they are in camera view to YOLO-style
+    pose estimation positions for a dataset."""
+    fx = 180 
+    fy = 180
+    img_w = 640
+    img_h = 360
+    
+    # check each gate is in camera frame then input for label
+    yolo_labels = []
+    for i in range(len(env.venv.gates)):
+        # get gates world pos relative to drone
+        center = env.venv.gates[i]
+        right = env.venv.rot_mats[i, :, 0] * env.venv.half_w
+        up = env.venv.rot_mats[i, :, 2] * env.venv.half_h
+        drone_pos = env.venv.drone_pos[0]
+
+        p_world = np.stack([
+            (center - right + up) - drone_pos,  # TL
+            (center + right + up) - drone_pos,  # TR
+            (center + right - up) - drone_pos,  # BR
+            (center - right - up) - drone_pos  # BL
+        ], axis=0)
+
+        # world pos relative to drone -> drone local position
+        R_world = env.venv._full_obs[0, 3:12].reshape(3, 3)
+        p_body = (R_world.T @ p_world.T).T
+        
+        # drone local position -> camera local position
+        p_body_offset = p_body - [0, 0, 0.3]  # still in drone pos, just offset by cam z
+        p_cam = (env.venv.R_body_cam.T @ p_body_offset.T).T
+        
+        # forward axis
+        if (np.all(p_cam[:, 2] > 2)):
+            # camera local pos projected to image pixels
+            u = 320 + fx * p_cam[:, 0] / p_cam[:, 2]
+            v = 180 + fy * p_cam[:, 1] / p_cam[:, 2]
+            # per corner bool mask, normalize & check visibility
+            in_bounds = (u >= 0) & (u <= 640) & (v >= 0) & (v <= 360)
+            
+            if np.sum(in_bounds) >= 3:
+                # grab all in bound coordinates, normalize
+                u_vis = u[in_bounds]
+                v_vis = v[in_bounds]
+                x_min, x_max = u_vis.min(), u_vis.max()
+                y_min, y_max = v_vis.min(), v_vis.max()
+                
+                w = (x_max - x_min) / img_w
+                h = (y_max - y_min) / img_h
+                cx = (x_min + x_max) / 2 / img_w
+                cy = (y_min + y_max) / 2 / img_h
+
+                # if not below 20 pixels in width / height
+                if (w > 0.03 and h > 0.03):
+                    u /= 640
+                    v /= 360
+                    # yolo format for pose:
+                    # <class> <xc> <yc> <w> <h> 
+                    # <kp1_x> <kp1_y> <kp1_vis> <kp2_x> <kp2_y> <kp2_vis> 
+                    # <kp3_x> <kp3_y> <kp3_vis> <kp4_x> <kp4_y> <kp4_vis>
+                    temp_str = f"0 {cx:.6f} {cy:.6f} {w} {h}"
+                    for j in range(len(u)):
+                        vis = 2 if in_bounds[j] else 0
+                        kp_x = float(u[j]) if in_bounds[j] else 0.0
+                        kp_y = float(v[j]) if in_bounds[j] else 0.0
+                        temp_str += f" {kp_x:.6f} {kp_y:.6f} {vis}"
+                    yolo_labels.append(temp_str)
+    
+    return yolo_labels
+
 def test_model(
         env, 
         model, 
