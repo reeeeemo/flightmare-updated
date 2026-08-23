@@ -29,7 +29,7 @@ Flightmare can be used for various applications, including path-planning, reinfo
 
 # What differs this from the original?
 - While Flightmare is originally intended for Python 3.6 and Ubuntu 18.04, updates have been made to include **Python 3.9** and **Ubuntu 20.04**, which is what the Docker runs on. This also includes support for CUDA devices tested up to **CUDA 13.1**.
-- Updated Dockerfile and `.devcontainer` for a streamlined coding process. (See installation for details).
+- Updated Dockerfile and `.devcontainer` for a streamlined coding process. (See [Installation](./README.md#installation) for details).
 - Added support for newer libraries such as stable_baselines3 and PyTorch so the newest versions of models such as PPO or SAC can be run.
 - 2 New environments for reinforcement-learning based training on a drone learning to hover and fly through gate objects.
   - Includes the ability to add gates from Python versus hard-coding in C++ then recompiling
@@ -126,6 +126,8 @@ Trains a PPO policy to hover at a GOAL_XYZ/RPY stated in-line.
 | `--seed` | 0 | Seeding for NumPy (random gate generation)
 | `-w` / `--weight` | `./saved/quadrotor_env.zip` | Trained weight path
 | `-wn` / `--norm_weight` | `''` | Trained normalization weights for model
+
+> If one desires to view their created dataset with labels overlaid or to train a vision model on said dataset, read [train_vision_model_sim.py](./flightrl/examples/train_vision_model_sim.py) and [view_dataset.py](./flightrl/examples/view_dataset.py)
 
 ## Publication of Original Flightmare
 

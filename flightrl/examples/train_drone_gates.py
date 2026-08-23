@@ -1,3 +1,24 @@
+"""
+    Trains drone via a phase-based system to autonomusly fly through gates.
+"""
+
+# Use: python3 train_drone_gates.py
+#   --render <1/0>  (default 1)
+#   --train <1/0>   (default 0)
+#   --save_dir <save_dir>   (default ./saved)
+#   --seed <seed_int>   (default 0)
+#   --weight <saved_quadcopter_zip> (can also use -w)
+#   --norm_weight <saved_quadcopter_normalization_stats> (can also use -wn)
+#   --camera <1/0> (default 0)
+#   --vision_weights <saved_vision_pt> (can also use --wv)
+#   --build_dataset <1/0> (default 0) (can also use --bd)
+# Example:
+# python3 train_drone_gates.py
+#   --render 1
+#   --train 0
+#   --weight ./saved/quadrotor_env.zip
+#   --norm_weight ./saved/quadrotor_env/vec_normalize.pkl (optional)
+
 from ruamel.yaml import YAML
 
 from pathlib import Path
@@ -20,27 +41,11 @@ from stable_baselines3.common.utils import LinearSchedule
 from flightgym import QuadrotorEnv_v1
 
 
-# Trains drone on its ability to hover.
-# Allows for rendering via unity and saved weights
-
-# Use: python3 train_drone_gates.py
-#   --render <1/0>  (default 1)
-#   --train <1/0>   (default 0)
-#   --save_dir <save_dir>   (default ./saved)
-#   --seed <seed_int>   (default 0)
-#   --weight <saved_quadcopter_zip> (can also use -w)
-#   --norm_weight <saved_quadcopter_normalization_stats> (can also use -wn)
-#   --camera <1/0> (default 0)
-#   --vision_weights <saved_vision_pt> (can also use --wv)
-#   --build_dataset <1/0> (default 0) (can also use --bd)
-# Example:
-# python3 train_drone_gates.py
-#   --render 1
-#   --train 0
-#   --weight ./saved/quadrotor_env.zip
-#   --norm_weight ./saved/quadrotor_env/vec_normalize.pkl (optional)
-
 class SelectiveVecNormalize(VecNormalize):
+    """Custom VecNormalize class to exclude normalization of indices noted.
+    
+    Angular velocity should be normalized so it can be used between sims.
+    """
     def __init__(self, venv,
                  norm_obs=True, 
                  norm_reward=True,
@@ -55,10 +60,17 @@ class SelectiveVecNormalize(VecNormalize):
         return normed
 
 class CurriculumCallback(BaseCallback):
+    """Callback function that Manages gate curriculum.
+    
+    At each rollout start: advance gate curriculum, clamp policy log-std
+    to bound exploration, and log curriculum metrics.
+    """
     def _on_rollout_start(self) -> None:
         self.training_env.curriculum_callback()
+        ### CLAMP LOG_STD (stops runaway, prevents dead-grad collapse) ###
         with torch.no_grad():
             self.model.policy.log_std.data.clamp_(max=0.0,min=-1.897)
+        ### RECORD DATA ###
         self.logger.record("curriculum/n_gates", self.training_env.n_gates)
         self.logger.record("curriculum/inner_depth", self.training_env.half_h)
         self.logger.record("curriculum/max_std", float(self.model.policy.log_std.detach().exp().max()))
@@ -69,10 +81,12 @@ class CurriculumCallback(BaseCallback):
     def _on_step(self) -> bool:
         return True
     
-# entropy scheduler since determminism would be enhanced through curriculum learning
-# and if large entropy towards the end of training it relies on noise.
 class EntropySchedulerCallback(BaseCallback):
-    """Entropy scheduler that goes from start -> end via 1->0 progress"""
+    """Entropy scheduler that goes from start -> end via 1->0 progress.
+    
+    Entropy decays as curriculum advances, if risen with competence would increase
+    reliance on noise for actions (stochastic policy).
+    """
     def __init__(self, start: float = 0.005, end: float = 0.001, end_fraction: float = 0.9):
         super().__init__()
         self.start = start
@@ -151,8 +165,6 @@ def main():
     stream = edit_yaml(args)
 
     # flies through gates
-    # init gates is 1 for p1, but for p2 and p3 it should be learning gate geometry
-    # not single gate behaviors
     env = QuadcopterGatesVec(
         QuadrotorEnv_v1(stream.getvalue(), False),
         use_cam=args.camera,
@@ -187,6 +199,7 @@ def main():
     reset_timesteps = False
 
     if args.train:
+        ### TRAIN WITH OR WITHOUT WEIGHTS ###
         if args.weight == "./saved/quadrotor_env.zip":
             env = SelectiveVecNormalize(env, 
                                         norm_obs=True, 
@@ -238,19 +251,19 @@ def main():
         if args.render:
             env.disconnectUnity()
 
-    # # Testing mode with a trained weight
     else:
+        ### TEST WITH TRAINED WEIGHTS ###
         env = SelectiveVecNormalize.load(args.norm_weight, env)
         env.training = False
         model = PPO.load(args.weight, env=env, device="cpu")
         test_model(
             env, model, 
-            num_rollouts=10,
+            num_rollouts=1,
             render=args.render, 
             weight_path=args.weight, 
             vid=args.camera, 
             vision_weights=args.wv,
-            build_dataset=args.bd
+            build_dataset=args.bd,
         )
 
 

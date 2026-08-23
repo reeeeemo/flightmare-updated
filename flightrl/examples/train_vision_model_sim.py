@@ -1,13 +1,15 @@
-from ultralytics import YOLO
-import argparse
-from pathlib import Path
-import torch
-
-# Fine-tunes / Trains a vision model on a dataset given via simulation.
+"""
+    Fine-tune / Train a vision model on a dataset given.
+"""
 
 # Use: python3 train_vision_model_sim.py
 #   --weights <weight_dir>
 #   --dataset <dataset_dir>
+
+from ultralytics import YOLO
+import argparse
+from pathlib import Path
+import torch
 
 def parser():
     parser = argparse.ArgumentParser()

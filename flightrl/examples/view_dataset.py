@@ -1,8 +1,7 @@
-import cv2
-import argparse
-from pathlib import Path
+"""
+    View created dataset from a YOLO format.
+"""
 
-# Views created dataset in a YOLO format
 # can designate between keypoints or segmentations
 # Use: python3 view_dataset.py
 #   --dataset <dataset_dir>
@@ -11,6 +10,11 @@ from pathlib import Path
 # python3 view_dataset.py 
 #   --dataset ./saved/dataset/
 #   --kp 0
+
+import cv2
+import argparse
+from pathlib import Path
+
 
 def parser():
     parser = argparse.ArgumentParser()

@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 from glob import glob
 from rpg_baselines.common.plotting import Plotter
+import uuid
+
+EVAL_FOLDER = Path("./eval")
+EVAL_FOLDER.mkdir(parents=True, exist_ok=True)
 
 def convert_to_yolo_kp_labels(env):
     """Convert known gate positions if they are in camera view to YOLO-style
@@ -85,7 +89,7 @@ def test_model(
         weight_path: str = "", 
         vid: bool = False, 
         vision_weights: str = "",
-        build_dataset: bool = False
+        build_dataset: bool = False,
     ):
     """Inferences model for a number of rollouts.
     
@@ -93,16 +97,26 @@ def test_model(
     Additionally, can build a YOLO-style pose dataset using camera 
     and known absolute gate positions.
     Args:
-        render (bool): whether to render unity standalone
-        num_rollouts (int): # of rollouts to inference on
-        weight_path (string): weight path to use for inference
-        vid (bool): whether to record video via camera
-        vision_weights (string): whether to use vision model inference (cam must be true) 
-        build_dataset (bool): whether to build dataset (cam must be true)
+        render : whether to render unity standalone
+        num_rollouts : # of rollouts to inference on
+        weight_path : weight path to use for inference
+        vid : whether to record video via camera
+        vision_weights : whether to use vision model inference (cam must be true) 
+        build_dataset : whether to build dataset (cam must be true)
     """
     max_ep_length = env.max_episode_steps
-    os.makedirs("eval", exist_ok=True)
-
+    uuid_index = uuid.uuid4()
+    obs_type = "vision" if vision_weights != "" else "gt"
+    # Create a unique uuid folder for this run if not existing already
+    while True:
+        try:
+            save_folder = EVAL_FOLDER / obs_type / str(uuid_index)
+            save_folder.mkdir(parents=True)
+        except FileExistsError:
+            uuid_index = uuid.uuid4()
+        else:
+            break
+    
     if render:
         env.connectUnity()
     if vision_weights != "":
@@ -203,35 +217,39 @@ def test_model(
         # --------------------
         # SAVE ALL VALS FROM CUR ROLLOUT TO COMPRESSED NUMPY FILE
         # --------------------
+        save_path = str(save_folder / f"rollout_{env.venv.cur_seed}_{n_roll:03d}.npz")
         np.savez_compressed(
-            f"eval/rollout_{n_roll:03d}.npz",
+            save_path,
             traj=traj[:time_i],
             hits=infos[0]["episode"]["gate_hits"],
             crosses=infos[0]["episode"]["gate_crosses"],
             residual=residual[:time_i],
             gt_dist=gt_dist[:time_i],
-            detections=detections[:time_i]
+            detections=detections[:time_i],
+            n_gates=env.venv.n_gates
         )
 
         if vid and not build_dataset:
             out.release()
         print(f"\n\nEpisode ended: step={ep_len}. gate={env.venv.cur_gate[0]}. rew={rew}\n\n")
-
+        
     # --------------------
     # GRAPH ALL ROLLOUT DATA
     # --------------------
     gates = env.venv.gates.astype(np.float32)
     rots = env.venv.rot_mats.astype(np.float32)
     half_w, half_h = env.venv.half_w, env.venv.half_h
-    data_keys = ["traj", "hits", "crosses", "residual", "gt_dist", "detections"]
-    data = [f"eval/rollout_{n_roll:03d}.npz" for n_roll in range(num_rollouts)]
+    data_keys = ["traj", "hits", "crosses", "residual", "gt_dist", "detections", "n_gates"]
+    data = [fn for fn in glob(f"{str(save_folder)}/rollout_*")]
     
-    plt = Plotter(gates, rots, env.venv.sim_dt, (half_w, half_h))
+    plt = Plotter(gates, rots, env.venv.sim_dt, (half_w, half_h), str(save_folder))
     plt.load_data(npz=data, keys=data_keys)
+    
     plt.plot_trajectory()
     plt.plot_side_trajectory()
     plt.plot_hits()
     plt.plot_residual()
+    plt.plot_completion()
         
     if render:
         env.disconnectUnity()

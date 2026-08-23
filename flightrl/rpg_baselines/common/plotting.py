@@ -14,12 +14,18 @@ class Plotter:
         gates : gate positions used for every rollout
         rots : gate rotations used for every rollout
     """
-    def __init__(self, gates: list, rotations: list, sim_dt: float, gate_dims: tuple):
+    def __init__(self, 
+                 gates: list, 
+                 rotations: list, 
+                 sim_dt: float, 
+                 gate_dims: tuple,
+                 save_path: str):
         self.data = {}
         self.half_w, self.half_h = gate_dims
         self.gates = gates
         self.rotations = rotations
         self.sim_dt = sim_dt
+        self.save_path = save_path
 
     def load_data(self, npz: list[str], keys: list[str]):
         """Load data for plotting."""
@@ -83,7 +89,7 @@ class Plotter:
 
         ax[2].set_xlabel("true gate distance (m)")
         fig.suptitle("Vision error vs distance")
-        fig.savefig(f"eval/residual_all.png")
+        fig.savefig(f"{self.save_path}/residual_all.png")
     
     def plot_trajectory(self):
         """Plot the overall trajectory and gate positions/rotations."""
@@ -144,7 +150,7 @@ class Plotter:
         ax.autoscale()
             
         plt.tight_layout()
-        plt.savefig(f"eval/traj.png", dpi=150, bbox_inches="tight")
+        plt.savefig(f"{self.save_path}/traj.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
         
     def plot_side_trajectory(self):
@@ -195,7 +201,7 @@ class Plotter:
         ax.autoscale()
 
         plt.tight_layout()
-        plt.savefig(f"eval/attitude_traj.png", dpi=150, bbox_inches="tight")
+        plt.savefig(f"{self.save_path}/attitude_traj.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
 
     def plot_hits(self):
@@ -243,5 +249,48 @@ class Plotter:
             axes[j // cols, j % cols].axis("off")
         
         plt.tight_layout()
-        plt.savefig(f"eval/gate_spread.png", dpi=150, bbox_inches="tight")
+        plt.savefig(f"{self.save_path}/gate_spread.png", dpi=150, bbox_inches="tight")
         plt.close()
+    
+    def plot_completion(self):
+        """Plot per-gate completion %. all rollouts should be same gates."""
+        crosses = self.data.get("crosses")
+        
+        # find all gates who reached and get standard error
+        reached = ~np.isnan(np.stack(crosses)).any(2)
+        rate = reached.mean(axis=0)
+        se = np.sqrt(rate * (1 - rate) / reached.shape[0])
+        gate_idx = np.arange(1, reached.shape[1] + 1)
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # plot completion rate % and its std-dev (confidence given samples)
+        line, = ax.plot(gate_idx, rate, marker="o", label="completion", color=(0, 1, 0))
+        ax.fill_between(
+            gate_idx, np.clip(rate - 1.96*se, 0, 1),
+            np.clip(rate + 1.96*se, 0, 1),
+            alpha=0.2, color=line.get_color()
+        )
+        for i in gate_idx:
+            ax.annotate(
+                f"{rate[i-1]:.1%}",
+                (i, rate[i-1]),
+                textcoords="offset points",
+                xytext=(0,8),
+                ha="center",
+                fontsize=9,
+                color="red"
+            )
+        
+        
+        ax.set_xlabel("gate idx")
+        ax.set_ylabel("completion rate")
+        ax.set_ylim(0, 1.02)
+        ax.set_xticks(gate_idx)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+        
+        ax.set_title(f"Per-gate completion - {reached.shape[0]} rollouts")
+        fig.tight_layout()
+        fig.savefig(f"{self.save_path}/completion.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)

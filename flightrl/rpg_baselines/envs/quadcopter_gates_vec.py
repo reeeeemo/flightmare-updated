@@ -113,7 +113,7 @@ class QuadcopterGatesVec(VecEnv):
         # half of inner width/height + account for drone size scoring
         self.half_w = 0.75
         self.half_h = 0.75
-        self.score_half = 0.61
+        self.score_half = 0.61  # account for drone width/height
         self.gate_depth = 0.26  # depth of gate
         self.v_max = 99
         self.sim_dt = 0.00833333333  # 120hz
@@ -175,6 +175,7 @@ class QuadcopterGatesVec(VecEnv):
         self.phase = phase
         self.injection_rate = 0.75
         self.training_seeds = [1, 20, 40, 0, 3, 6, 9, 7]
+        self.cur_seed = 0
 
         # ------------------------------------
         # VISION INFERENCE VARS
@@ -192,6 +193,7 @@ class QuadcopterGatesVec(VecEnv):
 
     def seed(self, seed=0):
         self.wrapper.setSeed(seed)
+        self.cur_seed = seed
 
     def _compute_reward(self, action: np.ndarray):
         """Computes reward of drone in environment.
@@ -665,6 +667,7 @@ class QuadcopterGatesVec(VecEnv):
         chosen_seed = np.random.choice(self.training_seeds)
         saved_state = np.random.get_state()
         np.random.seed(chosen_seed)
+        self.cur_seed = chosen_seed
 
         # ------------------------------------
         # POSITION / ROTATION RANDOMIZATION
