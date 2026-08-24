@@ -1,9 +1,14 @@
-# Flightmare, Updated.
-
+# Flightmare, Updated
 
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 
 > If you're curious to see this in use, checkout my [X profile](https://x.com/robobOxley)! I have posted several video clips using the policies trained in this simulator.
+
+---
+
+**Vision-based RL for Autonomous Drone Racing**: 📄 [Technical Writeup PDF](./FlightmareUpdatedWriteup.pdf)
+
+---
 
 **Flightmare** is a flexible modular quadrotor simulator.
 
