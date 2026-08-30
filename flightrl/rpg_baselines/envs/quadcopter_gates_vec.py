@@ -105,7 +105,7 @@ class QuadcopterGatesVec(VecEnv):
         self.act_coef = -0.01
         self.offset_coef = 0
         self.perception_coef = -0.01 if phase != 3 else -0.1
-        self.gate_bonus = 10 if phase != 3 else 30
+        self.gate_bonus = 10 #if phase != 3 else 30
 
         # ------------------------------------
         # GATE VARIABLES

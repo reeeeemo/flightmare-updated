@@ -6,7 +6,7 @@
 
 ---
 
-**Vision-based RL for Autonomous Drone Racing**: 📄 [Technical Writeup PDF](./FlightmareUpdatedWriteup.pdf)
+**Vision-based RL for Autonomous Drone Racing**: 📄 [Technical Writeup PDF](./Vision_Based_Reinforcement_Learning_for_Autonomous_Drone_Racing.pdf)
 
 ---
 
